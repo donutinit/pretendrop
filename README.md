@@ -67,16 +67,18 @@ The file is plain JSON and is created automatically on first run. Existing
 Butter preferences are migrated once if they are found, without deleting the
 old file. Set `PRETENDROP_PREFERENCES_FILE` to use an explicit JSON path.
 
-`bun run install:linux` also creates this personal symlink when `~/dot` exists:
+When `~/dot` exists, `bun run install:linux` keeps the plain JSON in your
+private dotfiles source and exposes it at the standard XDG path:
 
 ```text
-~/dot/stow/common/.config/pretendrop/preferences.json
-  -> ~/.config/pretendrop/preferences.json
+~/.config/pretendrop/preferences.json
+  -> ~/dot/stow/common/.config/pretendrop/preferences.json
 ```
 
-That lets your dotfiles repository point at the config without Pretendrop ever
-writing state inside the repository. The macOS build uses the platform app-data
-directory instead of an XDG path.
+Pretendrop resolves that link before its atomic save, so it never replaces the
+link itself. This keeps personal preference data in the private dotfiles repo,
+not in the Pretendrop source repository. The macOS build uses the platform
+app-data directory instead of an XDG path.
 
 ## Shuffle
 

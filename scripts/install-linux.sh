@@ -57,11 +57,38 @@ if test -f "$pretendrop_legacy_desktop_file"; then
 fi
 
 if test -d "$HOME/dot"; then
-  if test -e "$pretendrop_dot_file" && test ! -L "$pretendrop_dot_file"; then
-    printf 'Not replacing existing dotfile: %s\n' "$pretendrop_dot_file" >&2
+  mkdir -p "$(dirname "$pretendrop_dot_file")"
+
+  if test -L "$pretendrop_dot_file" && test "$(readlink -f "$pretendrop_dot_file")" = "$pretendrop_config_file"; then
+    unlink "$pretendrop_dot_file"
+  fi
+
+  if test -e "$pretendrop_config_file" && test ! -L "$pretendrop_config_file"; then
+    if test -e "$pretendrop_dot_file"; then
+      printf 'Not replacing existing config or dotfile; link them manually.\n' >&2
+    else
+      mv "$pretendrop_config_file" "$pretendrop_dot_file"
+    fi
+  fi
+
+  if test ! -e "$pretendrop_dot_file"; then
+    printf '%s\n' \
+      '{' \
+      '  "version": 2,' \
+      '  "favorites": [],' \
+      '  "shuffleScope": "all",' \
+      '  "shuffleStyle": "entropy",' \
+      '  "presetIntervalSeconds": 35,' \
+      '  "favoritesSeedVersion": 0' \
+      '}' > "$pretendrop_dot_file"
+  fi
+
+  if test -L "$pretendrop_config_file"; then
+    :
+  elif test ! -e "$pretendrop_config_file"; then
+    ln -s "$pretendrop_dot_file" "$pretendrop_config_file"
   else
-    mkdir -p "$(dirname "$pretendrop_dot_file")"
-    ln -sfn "$pretendrop_config_file" "$pretendrop_dot_file"
+    printf 'Not replacing existing config file: %s\n' "$pretendrop_config_file" >&2
   fi
 fi
 
@@ -70,5 +97,5 @@ if command -v update-desktop-database >/dev/null 2>&1; then
 fi
 
 printf 'Desktop entry installed at %s\n' "$pretendrop_desktop_file"
-printf 'Dotfiles link points to %s\n' "$pretendrop_config_file"
+printf 'Preferences link installed at %s\n' "$pretendrop_config_file"
 printf '%s\n' 'Open it with: rofi -show drun'

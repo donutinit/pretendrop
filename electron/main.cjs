@@ -151,8 +151,18 @@ async function loadPreferences() {
   return { path: targetPath, sourcePath: null, preferences: null };
 }
 
+async function resolvePreferencesWritePath(preferencesPath) {
+  try {
+    return await fs.realpath(preferencesPath);
+  } catch (error) {
+    if (error.code === "ENOENT") return preferencesPath;
+    throw error;
+  }
+}
+
 async function savePreferences(value) {
-  const { targetPath: preferencesPath } = await getPreferencesLocations();
+  const { targetPath } = await getPreferencesLocations();
+  const preferencesPath = await resolvePreferencesWritePath(targetPath);
   const preferences = normalizePreferences(value);
   const directory = path.dirname(preferencesPath);
   const temporaryPath = `${preferencesPath}.tmp-${process.pid}`;
@@ -164,7 +174,7 @@ async function savePreferences(value) {
     "utf8",
   );
   await fs.rename(temporaryPath, preferencesPath);
-  return { path: preferencesPath, preferences };
+  return { path: targetPath, preferences };
 }
 
 async function compactTrack(trackPath) {

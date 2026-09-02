@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="es-MX">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#130f1d" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' file:; connect-src 'self'; font-src 'self' data:; worker-src 'self' blob:"
+    />
+    <title>Pretendrop — A Pretentious Backdrop for videos, based on Butterchurn.</title>
+  </head>
+  <body>
+    <canvas id="visualizer" aria-label="Visualizador de música"></canvas>
+    <div class="vignette" aria-hidden="true"></div>
+    <div id="settings-scrim" aria-hidden="true"></div>
+
+    <main id="interface" class="is-visible">
+      <header class="topbar" aria-label="Estado de Pretendrop">
+        <div class="brand">
+          <span class="brand-wordmark">pretendrop / 1.0</span>
+        </div>
+        <div id="library-status" class="status-pill" aria-live="polite">Preparando biblioteca…</div>
+      </header>
+
+      <section class="now-playing" aria-live="polite">
+        <p id="playback-state" class="eyebrow playback-state">preparando audio</p>
+        <h1 id="track-title">Esperando una canción</h1>
+        <p id="track-detail">Elige una biblioteca musical</p>
+      </section>
+
+      <footer class="control-dock">
+        <div class="preset-readout">
+          <span class="eyebrow"><span id="preset-mode">entropía / todos</span></span>
+          <div class="preset-title-row">
+            <span id="preset-name">Cargando visuales…</span>
+            <button
+              id="toggle-favorite"
+              class="favorite-button"
+              type="button"
+              aria-pressed="false"
+              aria-label="Agregar preset a favoritos"
+              title="Agregar a favoritos (H)"
+            >♡</button>
+          </div>
+        </div>
+
+        <div class="transport-console" aria-label="Controles del visualizador">
+          <div class="controls">
+            <button id="previous-preset" type="button" aria-label="Preset anterior" title="Preset anterior (←)">←</button>
+            <button id="toggle-playback" type="button" aria-label="Pausar" title="Pausar o reproducir (espacio)">PAUSA</button>
+            <button id="next-track" class="primary" type="button" title="Otra canción (N)">pista</button>
+            <button id="next-preset" type="button" aria-label="Siguiente preset" title="Siguiente preset (→)">→</button>
+            <button id="settings-button" class="settings-trigger" type="button" aria-label="Abrir ajustes de presets" title="Ajustes (O)"><span class="settings-icon" aria-hidden="true">⚙</span><span>curar</span></button>
+          </div>
+        </div>
+      </footer>
+
+      <p class="shortcut-hint">espacio pausa · n canción · ← → presets · o ajustes · f kiosco</p>
+    </main>
+
+    <aside id="settings-panel" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="settings-title" aria-label="Curador de presets">
+      <div class="settings-heading">
+        <div>
+          <p class="eyebrow">pretendrop</p>
+          <h2 id="settings-title">Presets</h2>
+        </div>
+        <button id="close-settings" class="close-button" type="button" aria-label="Cerrar curador" title="Cerrar ajustes">×</button>
+      </div>
+
+      <section class="setting-group favorites-settings" aria-label="Favoritos">
+        <div class="favorites-heading">
+          <div>
+            <span class="setting-label">favoritos</span>
+          </div>
+          <span id="favorites-total" class="count-badge" aria-label="Favoritos guardados">0</span>
+        </div>
+        <label class="search-field" for="favorite-search">
+          <span class="search-symbol" aria-hidden="true">⌕</span>
+          <span class="visually-hidden">Filtrar favoritos</span>
+          <input id="favorite-search" type="search" autocomplete="off" placeholder="Filtrar la selección" />
+        </label>
+        <div id="favorites-list" class="favorites-list"></div>
+      </section>
+
+      <section class="setting-group shuffle-settings" aria-label="Opciones de shuffle">
+        <div>
+          <span class="setting-label">universo del shuffle</span>
+        </div>
+        <div id="shuffle-scope" class="segmented-control">
+          <button type="button" data-shuffle-scope="all"><span>todos</span><strong id="all-count"></strong></button>
+          <button type="button" data-shuffle-scope="favorites"><span>favoritos</span><strong id="favorites-count"></strong></button>
+        </div>
+
+        <label class="setting-label-with-control" for="shuffle-style">
+          <span class="setting-label">shuffle</span>
+          <select id="shuffle-style">
+            <option value="entropy">Entropía alta · azar cripto</option>
+            <option value="deck">Baraja · sin repetir hasta terminar</option>
+            <option value="explorer">Explorador · descubre los menos vistos</option>
+          </select>
+        </label>
+        <p id="shuffle-description" class="setting-help"></p>
+      </section>
+
+      <section class="system-settings" aria-label="Sistema">
+        <p class="eyebrow">sistema</p>
+        <div class="setting-group library-setting">
+          <div>
+            <span class="setting-label">biblioteca musical</span>
+            <p id="library-root" class="path-value">Sin biblioteca seleccionada</p>
+          </div>
+          <button id="choose-library" class="quiet-button" type="button">cambiar carpeta <span aria-hidden="true">↗</span></button>
+        </div>
+
+        <label class="setting-group" for="display-select">
+          <span class="setting-label">pantalla</span>
+          <select id="display-select"></select>
+        </label>
+
+        <label class="setting-group" for="preset-duration">
+          <span class="setting-label">segundos entre cambios</span>
+          <span class="seconds-input">
+            <input id="preset-duration" type="number" min="0" max="3600" step="1" value="35" inputmode="numeric" aria-describedby="preset-duration-note" />
+            <span aria-hidden="true">s</span>
+          </span>
+          <span id="preset-duration-note" class="setting-subtitle">0 = manual</span>
+        </label>
+      </section>
+
+      <p class="setting-note">Audio reactivo, salida en cero.</p>
+    </aside>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

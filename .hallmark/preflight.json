@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "date": "2026-09-02",
+  "scope": "single-page Electron visualizer",
+  "framework": "Vite + vanilla JavaScript + Electron",
+  "targetFiles": ["index.html", "src/main.js", "src/style.css"],
+  "plannedCreates": ["tokens.css", ".hallmark/preflight.json", ".hallmark/log.json"],
+  "plannedDeletes": [],
+  "existingSystem": {
+    "designMd": false,
+    "hallmarkLog": false,
+    "tokensCss": false,
+    "styling": "single hand-written CSS file with raw dark RGB values and glass surfaces",
+    "fonts": "Inter / system UI; local Acumin Pro, DM Sans and 0xProto mono are available",
+    "motion": "CSS fades/transforms only; Butterchurn is the primary animated canvas",
+    "layout": "full-screen canvas, overlay controls, off-canvas settings panel"
+  },
+  "designChoice": {
+    "genre": "modern-minimal",
+    "theme": "Monochrome Terminal",
+    "macrostructure": "Index-First",
+    "tone": "monochrome terminal",
+    "enrichment": "canvas-native"
+  },
+  "constraints": [
+    "Keep the Butterchurn and silent-audio logic intact.",
+    "Use named design tokens for all colors and font families.",
+    "Use user-directed monochrome grayscale and a single monospaced typeface.",
+    "Keep presets, favorites, three shuffle modes and keyboard control discoverable."
+  ]
+}

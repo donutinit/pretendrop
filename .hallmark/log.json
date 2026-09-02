@@ -1,0 +1,13 @@
+[
+  {
+    "date": "2026-09-02",
+    "scope": "single-page",
+    "genre": "modern-minimal",
+    "theme": "Monochrome Terminal",
+    "macrostructure": "Index-First",
+    "tone": "monochrome terminal",
+    "enrichment": "canvas-native",
+    "files": ["index.html", "src/main.js", "src/style.css", "tokens.css"],
+    "notes": "Rebuilt the visual layer in place as an opaque curator console over Butterchurn; then made it user-directed grayscale with one monospaced typeface. Audio, preset, favorite and display logic remain intact."
+  }
+]

@@ -1,0 +1,82 @@
+{
+  "name": "pretendrop",
+  "version": "1.0.0",
+  "description": "A Pretentious Backdrop for videos, based on Butterchurn.",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "desktopName": "com.donutinit.pretendrop",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "dev:desktop": "PRETENDROP_DEV_SERVER_URL=http://127.0.0.1:5173 ./node_modules/electron/dist/electron .",
+    "start": "./node_modules/electron/dist/electron .",
+    "build": "vite build",
+    "dist": "bun run build && bun ./node_modules/electron-builder/out/cli/cli.js",
+    "dist:dir": "bun run build && bun ./node_modules/electron-builder/out/cli/cli.js --dir",
+    "dist:linux": "bun run build && bun ./node_modules/electron-builder/out/cli/cli.js --linux",
+    "dist:linux:dir": "bun run build && bun ./node_modules/electron-builder/out/cli/cli.js --linux --dir",
+    "dist:mac": "bun run build && bun ./node_modules/electron-builder/out/cli/cli.js --mac",
+    "dist:mac:dir": "bun run build && bun ./node_modules/electron-builder/out/cli/cli.js --mac --dir",
+    "install:linux": "bash scripts/install-linux.sh",
+    "install:mac": "bash scripts/install-macos.sh"
+  },
+  "dependencies": {
+    "butterchurn": "3.0.0-beta.5",
+    "butterchurn-presets": "3.0.0-beta.4",
+    "music-metadata": "11.15.0"
+  },
+  "devDependencies": {
+    "electron": "latest",
+    "electron-builder": "latest",
+    "vite": "latest"
+  },
+  "build": {
+    "appId": "com.donutinit.pretendrop",
+    "productName": "Pretendrop",
+    "executableName": "pretendrop",
+    "directories": {
+      "output": "release"
+    },
+    "asar": true,
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "LICENSE",
+        "to": "LICENSE"
+      },
+      {
+        "from": "THIRD_PARTY_NOTICES.md",
+        "to": "THIRD_PARTY_NOTICES.md"
+      }
+    ],
+    "linux": {
+      "category": "AudioVideo",
+      "synopsis": "A Pretentious Backdrop for videos, based on Butterchurn.",
+      "desktop": {
+        "entry": {
+          "Name": "Pretendrop",
+          "Comment": "A Pretentious Backdrop for videos, based on Butterchurn.",
+          "Categories": "AudioVideo;Audio;Video;",
+          "Keywords": "visualizer;music;butterchurn;backdrop;",
+          "StartupWMClass": "com.donutinit.pretendrop"
+        }
+      },
+      "target": [
+        "AppImage",
+        "tar.gz"
+      ]
+    },
+    "mac": {
+      "category": "public.app-category.music",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    }
+  }
+}

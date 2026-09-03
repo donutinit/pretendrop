@@ -318,18 +318,18 @@ body.panel-open #settings-scrim {
   flex: 0 0 auto;
   place-items: center;
   padding: 0;
-  border: 0;
+  border: var(--line-1) solid var(--color-transparent);
   border-radius: var(--radius-xs);
   background: var(--color-transparent);
-  color: var(--color-muted);
-  font-size: var(--text-xl);
+  color: var(--color-ink-dim);
   line-height: 1;
   pointer-events: auto;
   transition: background-color var(--dur-short) var(--ease-press), border-color var(--dur-short) var(--ease-press), color var(--dur-short) var(--ease-press), transform var(--dur-instant) var(--ease-press);
 }
 
 .favorite-button:hover {
-  color: var(--color-accent);
+  border-color: var(--color-rule-strong);
+  color: var(--color-ink);
   transform: none;
 }
 
@@ -338,10 +338,26 @@ body.panel-open #settings-scrim {
 }
 
 .favorite-button.is-favorite {
-  border: var(--line-1) solid var(--color-ink);
-  background: var(--color-ink);
-  color: var(--color-canvas);
-  font-weight: 700;
+  border-color: var(--color-transparent);
+  background: var(--color-transparent);
+  color: var(--color-ink);
+}
+
+.heart-icon {
+  width: 1.18rem;
+  height: 1.18rem;
+  overflow: visible;
+  fill: transparent;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.55;
+  transition: fill var(--dur-short) var(--ease-press), stroke var(--dur-short) var(--ease-press);
+}
+
+.favorite-button.is-favorite .heart-icon {
+  fill: currentColor;
+  stroke: currentColor;
 }
 
 .transport-console {

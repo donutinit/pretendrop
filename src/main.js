@@ -369,7 +369,6 @@ function nextPresetIndex() {
 
 function updateFavoriteButton() {
   const isFavorite = state.favorites.has(currentPresetName());
-  elements.toggleFavorite.textContent = isFavorite ? "♥" : "♡";
   elements.toggleFavorite.classList.toggle("is-favorite", isFavorite);
   elements.toggleFavorite.setAttribute("aria-pressed", String(isFavorite));
   elements.toggleFavorite.setAttribute(

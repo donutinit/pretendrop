@@ -5,7 +5,7 @@ const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 
 const DEFAULT_LIBRARY_ROOT = path.join(os.homedir(), "Music");
-const PREFERENCES_SCHEMA_VERSION = 2;
+const PREFERENCES_SCHEMA_VERSION = 3;
 const AUDIO_EXTENSIONS = new Set([
   ".aac",
   ".aif",
@@ -114,6 +114,10 @@ function normalizePreferences(value) {
     ? [...new Set(value.favorites.filter((name) => typeof name === "string" && name.trim()))]
     : [];
   const presetIntervalSeconds = Math.round(Number(value?.presetIntervalSeconds));
+  const transitionSeconds = Number(value?.transitionSeconds);
+  const reactivity = Number(value?.reactivity);
+  const vignettePercent = Math.round(Number(value?.vignettePercent));
+  const trackIntervalMinutes = Math.round(Number(value?.trackIntervalMinutes));
 
   return {
     version: PREFERENCES_SCHEMA_VERSION,
@@ -125,6 +129,25 @@ function normalizePreferences(value) {
     presetIntervalSeconds: Number.isFinite(presetIntervalSeconds)
       ? Math.min(Math.max(presetIntervalSeconds, 0), 3600)
       : 35,
+    transitionSeconds: Number.isFinite(transitionSeconds)
+      ? Math.min(Math.max(transitionSeconds, 0), 15)
+      : 3.8,
+    reactivity: Number.isFinite(reactivity)
+      ? Math.min(Math.max(reactivity, 0.1), 3)
+      : 1,
+    vignettePercent: Number.isFinite(vignettePercent)
+      ? Math.min(Math.max(vignettePercent, 0), 100)
+      : 42,
+    quality: ["eco", "normal", "full"].includes(value?.quality)
+      ? value.quality
+      : "normal",
+    presetLocked: Boolean(value?.presetLocked),
+    trackIntervalMinutes: Number.isFinite(trackIntervalMinutes)
+      ? Math.min(Math.max(trackIntervalMinutes, 0), 1440)
+      : 0,
+    interfaceMode: ["auto", "visible", "hidden"].includes(value?.interfaceMode)
+      ? value.interfaceMode
+      : "auto",
     favoritesSeedVersion: Math.max(0, Math.round(Number(value?.favoritesSeedVersion)) || 0),
   };
 }
@@ -136,10 +159,12 @@ async function loadPreferences() {
   for (const sourcePath of candidates) {
     try {
       const contents = await fs.readFile(sourcePath, "utf8");
+      const rawPreferences = JSON.parse(contents);
       return {
         path: targetPath,
         sourcePath,
-        preferences: normalizePreferences(JSON.parse(contents)),
+        needsRewrite: rawPreferences?.version !== PREFERENCES_SCHEMA_VERSION,
+        preferences: normalizePreferences(rawPreferences),
       };
     } catch (error) {
       if (error.code !== "ENOENT") {

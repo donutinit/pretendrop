@@ -91,6 +91,23 @@ Choose **all presets** or **favorites**, then choose an engine:
 The seconds field controls automatic preset changes. Set it to `0` for manual
 changes only.
 
+## Scene controls
+
+The control panel also gives the visual system a small, practical set of live
+parameters:
+
+- **Intensity** changes the audio level fed to Butterchurn without changing the
+  muted speaker output.
+- **Transition** sets the preset crossfade duration.
+- **Vignette** sets the edge darkness from `0` to `100` percent.
+- **Quality** selects `eco`, `normal`, or `full` renderer budgets.
+- **Lock preset** stops automatic preset changes while tracks keep rotating.
+- **Track interval** selects a silent random track every N minutes; `0` keeps
+  the natural end-of-track behavior.
+- **Interface** can auto-hide, stay visible, or remain hidden.
+- **New chaos** resets session shuffle history; **blackout** hides the canvas
+  without closing Pretendrop. Press `B` for blackout from the keyboard.
+
 ## Install and build
 
 ### Linux and Rofi

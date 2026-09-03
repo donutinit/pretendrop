@@ -56,14 +56,14 @@
         </div>
       </footer>
 
-      <p class="shortcut-hint">espacio pausa · n canción · ← → presets · o ajustes · f kiosco</p>
+      <p class="shortcut-hint">espacio pausa · n canción · ← → presets · b blackout · o ajustes · f kiosco</p>
     </main>
 
     <aside id="settings-panel" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="settings-title" aria-label="Curador de presets">
       <div class="settings-heading">
         <div>
           <p class="eyebrow">pretendrop</p>
-          <h2 id="settings-title">Presets</h2>
+          <h2 id="settings-title">Control</h2>
         </div>
         <button id="close-settings" class="close-button" type="button" aria-label="Cerrar curador" title="Cerrar ajustes">×</button>
       </div>
@@ -101,6 +101,63 @@
           </select>
         </label>
         <p id="shuffle-description" class="setting-help"></p>
+      </section>
+
+      <section class="setting-group image-settings" aria-label="Imagen">
+        <p class="eyebrow">imagen</p>
+        <div class="parameter-grid">
+          <label class="setting-label-with-control" for="reactivity">
+            <span class="setting-label">intensidad</span>
+            <input id="reactivity" type="number" min="0.1" max="3" step="0.1" value="1" inputmode="decimal" />
+          </label>
+          <label class="setting-label-with-control" for="transition-duration">
+            <span class="setting-label">transición</span>
+            <span class="seconds-input">
+              <input id="transition-duration" type="number" min="0" max="15" step="0.1" value="3.8" inputmode="decimal" />
+              <span aria-hidden="true">s</span>
+            </span>
+          </label>
+          <label class="setting-label-with-control" for="vignette">
+            <span class="setting-label">viñeta</span>
+            <span class="percent-input">
+              <input id="vignette" type="number" min="0" max="100" step="1" value="42" inputmode="numeric" />
+              <span aria-hidden="true">%</span>
+            </span>
+          </label>
+          <label class="setting-label-with-control" for="quality">
+            <span class="setting-label">calidad</span>
+            <select id="quality">
+              <option value="eco">eco</option>
+              <option value="normal">normal</option>
+              <option value="full">full</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section class="setting-group behavior-settings" aria-label="Comportamiento">
+        <p class="eyebrow">comportamiento</p>
+        <label class="setting-label-with-control" for="track-interval">
+          <span class="setting-label">cambiar pista cada</span>
+          <span class="minutes-input">
+            <input id="track-interval" type="number" min="0" max="1440" step="1" value="0" inputmode="numeric" />
+            <span aria-hidden="true">min</span>
+          </span>
+          <span class="setting-subtitle">0 = sólo cuando termina</span>
+        </label>
+        <label class="setting-label-with-control" for="interface-mode">
+          <span class="setting-label">interfaz</span>
+          <select id="interface-mode">
+            <option value="auto">auto ocultar</option>
+            <option value="visible">siempre visible</option>
+            <option value="hidden">siempre oculta</option>
+          </select>
+        </label>
+        <div class="action-grid" aria-label="Acciones de escena">
+          <button id="preset-lock" type="button" aria-pressed="false">fijar preset</button>
+          <button id="toggle-blackout" type="button" aria-pressed="false">blackout</button>
+          <button id="reset-chaos" type="button">nuevo caos</button>
+        </div>
       </section>
 
       <section class="system-settings" aria-label="Sistema">

@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#130f1d" />
+    <meta name="theme-color" content="#010101" />
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' file:; connect-src 'self'; font-src 'self' data:; worker-src 'self' blob:"
@@ -20,7 +20,7 @@
         <div class="brand">
           <span class="brand-wordmark">pretendrop / 1.0</span>
         </div>
-        <div id="library-status" class="status-pill" aria-live="polite">Preparando biblioteca…</div>
+        <div id="library-status" class="status-pill" role="status" aria-live="polite">Preparando biblioteca…</div>
       </header>
 
       <section class="now-playing" aria-live="polite">
@@ -52,24 +52,31 @@
         <div class="transport-console" aria-label="Controles del visualizador">
           <div class="controls">
             <button id="previous-preset" type="button" aria-label="Preset anterior" title="Preset anterior (←)">←</button>
-            <button id="toggle-playback" type="button" aria-label="Pausar" title="Pausar o reproducir (espacio)">PAUSA</button>
+            <button id="toggle-playback" type="button" title="Pausar o seguir (espacio)">PAUSA</button>
             <button id="next-track" class="primary" type="button" title="Otra canción (N)">pista</button>
             <button id="next-preset" type="button" aria-label="Siguiente preset" title="Siguiente preset (→)">→</button>
-            <button id="settings-button" class="settings-trigger" type="button" aria-label="Abrir ajustes de presets" title="Ajustes (O)"><span class="settings-icon" aria-hidden="true">⚙</span><span>curar</span></button>
+            <button id="settings-button" class="settings-trigger" type="button" title="Curar presets (O)">
+              <svg class="ui-icon settings-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 7h8M17 7h3M4 17h3M12 17h8" />
+                <circle cx="14.5" cy="7" r="2.2" />
+                <circle cx="9.5" cy="17" r="2.2" />
+              </svg>
+              <span>curar</span>
+            </button>
           </div>
         </div>
       </footer>
 
-      <p class="shortcut-hint">espacio pausa · n canción · ← → presets · b blackout · o ajustes · f kiosco</p>
+      <p class="shortcut-hint">espacio pausa · n canción · ← → presets · b blackout · o curar · f kiosco</p>
     </main>
 
-    <aside id="settings-panel" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="settings-title" aria-label="Curador de presets">
+    <aside id="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title" inert>
       <div class="settings-heading">
         <div>
           <p class="eyebrow">pretendrop</p>
           <h2 id="settings-title">Control</h2>
         </div>
-        <button id="close-settings" class="close-button" type="button" aria-label="Cerrar curador" title="Cerrar ajustes">×</button>
+        <button id="close-settings" class="close-button" type="button" aria-label="Cerrar" title="Cerrar (Esc)">×</button>
       </div>
 
       <section class="setting-group favorites-settings" aria-label="Favoritos">
@@ -80,20 +87,22 @@
           <span id="favorites-total" class="count-badge" aria-label="Favoritos guardados">0</span>
         </div>
         <label class="search-field" for="favorite-search">
-          <span class="search-symbol" aria-hidden="true">⌕</span>
+          <svg class="ui-icon search-symbol" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" />
+            <path d="M20 20l-4.35-4.35" />
+          </svg>
           <span class="visually-hidden">Filtrar favoritos</span>
-          <input id="favorite-search" type="search" autocomplete="off" placeholder="Filtrar la selección" />
+          <input id="favorite-search" type="search" autocomplete="off" placeholder="Filtrar favoritos" />
         </label>
         <div id="favorites-list" class="favorites-list"></div>
       </section>
 
-      <section class="setting-group shuffle-settings" aria-label="Opciones de shuffle">
-        <div>
-          <span class="setting-label">universo del shuffle</span>
-        </div>
-        <div id="shuffle-scope" class="segmented-control">
-          <button type="button" data-shuffle-scope="all"><span>todos</span><strong id="all-count"></strong></button>
-          <button type="button" data-shuffle-scope="favorites"><span>favoritos</span><strong id="favorites-count"></strong></button>
+      <details class="panel-section shuffle-settings" open>
+        <summary class="section-summary">shuffle</summary>
+        <div class="section-body">
+        <div id="shuffle-scope" class="segmented-control" role="radiogroup" aria-label="Universo del shuffle">
+          <button type="button" role="radio" aria-checked="true" data-shuffle-scope="all"><span>todos</span><strong id="all-count"></strong></button>
+          <button type="button" role="radio" aria-checked="false" data-shuffle-scope="favorites"><span>favoritos</span><strong id="favorites-count"></strong></button>
         </div>
 
         <label class="setting-label-with-control" for="shuffle-style">
@@ -105,29 +114,43 @@
           </select>
         </label>
         <p id="shuffle-description" class="setting-help"></p>
-      </section>
 
-      <section class="setting-group image-settings" aria-label="Imagen">
-        <p class="eyebrow">imagen</p>
+        <label class="setting-label-with-control" for="preset-duration">
+          <span class="setting-label">segundos entre cambios</span>
+          <span class="seconds-input">
+            <input id="preset-duration" type="number" min="0" max="3600" step="1" value="35" inputmode="numeric" aria-describedby="preset-duration-note" />
+            <span aria-hidden="true">s</span>
+          </span>
+          <span id="preset-duration-note" class="setting-subtitle">0 = sólo manual</span>
+        </label>
+        </div>
+      </details>
+
+      <details class="panel-section image-settings" open>
+        <summary class="section-summary">imagen</summary>
+        <div class="section-body">
         <div class="parameter-grid">
-          <label class="setting-label-with-control" for="reactivity">
-            <span class="setting-label">intensidad</span>
-            <input id="reactivity" type="number" min="0.1" max="3" step="0.1" value="1" inputmode="decimal" />
-          </label>
-          <label class="setting-label-with-control" for="transition-duration">
-            <span class="setting-label">transición</span>
-            <span class="seconds-input">
-              <input id="transition-duration" type="number" min="0" max="15" step="0.1" value="3.8" inputmode="decimal" />
-              <span aria-hidden="true">s</span>
+          <div class="setting-label-with-control">
+            <span class="slider-head">
+              <label class="setting-label" for="reactivity">intensidad</label>
+              <output class="slider-value" id="reactivity-value" for="reactivity">1</output>
             </span>
-          </label>
-          <label class="setting-label-with-control" for="vignette">
-            <span class="setting-label">viñeta</span>
-            <span class="percent-input">
-              <input id="vignette" type="number" min="0" max="100" step="1" value="42" inputmode="numeric" />
-              <span aria-hidden="true">%</span>
+            <input id="reactivity" type="range" min="0.1" max="3" step="0.1" value="1" />
+          </div>
+          <div class="setting-label-with-control">
+            <span class="slider-head">
+              <label class="setting-label" for="transition-duration">transición</label>
+              <output class="slider-value" id="transition-duration-value" for="transition-duration">3.8 s</output>
             </span>
-          </label>
+            <input id="transition-duration" type="range" min="0" max="15" step="0.1" value="3.8" />
+          </div>
+          <div class="setting-label-with-control">
+            <span class="slider-head">
+              <label class="setting-label" for="vignette">viñeta</label>
+              <output class="slider-value" id="vignette-value" for="vignette">42 %</output>
+            </span>
+            <input id="vignette" type="range" min="0" max="100" step="1" value="42" />
+          </div>
           <label class="setting-label-with-control" for="quality">
             <span class="setting-label">calidad</span>
             <select id="quality">
@@ -137,10 +160,12 @@
             </select>
           </label>
         </div>
-      </section>
+        </div>
+      </details>
 
-      <section class="setting-group behavior-settings" aria-label="Comportamiento">
-        <p class="eyebrow">comportamiento</p>
+      <details class="panel-section behavior-settings">
+        <summary class="section-summary">comportamiento</summary>
+        <div class="section-body">
         <label class="setting-label-with-control" for="track-interval">
           <span class="setting-label">cambiar pista cada</span>
           <span class="minutes-input">
@@ -151,43 +176,80 @@
         </label>
         <label class="setting-label-with-control" for="interface-mode">
           <span class="setting-label">interfaz</span>
-          <select id="interface-mode">
+          <select id="interface-mode" aria-describedby="interface-mode-note">
             <option value="auto">auto ocultar</option>
             <option value="visible">siempre visible</option>
             <option value="hidden">siempre oculta</option>
           </select>
+          <span id="interface-mode-note" class="setting-subtitle">oculta = sólo O la trae de vuelta</span>
         </label>
         <div class="action-grid" aria-label="Acciones de escena">
           <button id="preset-lock" type="button" aria-pressed="false">fijar preset</button>
           <button id="toggle-blackout" type="button" aria-pressed="false">blackout</button>
           <button id="reset-chaos" type="button">nuevo caos</button>
+          <button id="reset-defaults" class="is-danger" type="button">restaurar valores</button>
         </div>
-      </section>
+        </div>
+      </details>
 
-      <section class="system-settings" aria-label="Sistema">
-        <p class="eyebrow">sistema</p>
+      <details class="panel-section system-settings">
+        <summary class="section-summary">sistema</summary>
+        <div class="section-body">
+        <div class="setting-group audio-source-settings">
+          <label class="setting-label-with-control" for="audio-source">
+            <span class="setting-label">fuente de audio</span>
+            <select id="audio-source">
+              <option value="library">biblioteca musical</option>
+              <option value="microphone">micrófono</option>
+              <option id="system-audio-option" value="system">audio del sistema · Linux</option>
+            </select>
+          </label>
+          <label id="microphone-device-setting" class="setting-label-with-control" for="microphone-device" hidden>
+            <span class="setting-label">micrófono</span>
+            <select id="microphone-device">
+              <option value="default">predeterminado del sistema</option>
+            </select>
+          </label>
+          <div id="audio-meter" class="audio-meter" hidden>
+            <div class="audio-meter-head">
+              <span class="setting-label">señal que recibe Electron</span>
+              <output id="audio-meter-level" class="audio-meter-level">−∞ dB</output>
+            </div>
+            <div
+              id="audio-meter-track"
+              class="audio-meter-track"
+              role="meter"
+              aria-label="Nivel de entrada de audio"
+              aria-valuemin="-72"
+              aria-valuemax="0"
+              aria-valuenow="-72"
+              aria-valuetext="Sin señal"
+            >
+              <span id="audio-meter-fill" class="audio-meter-fill"></span>
+              <span id="audio-meter-peak" class="audio-meter-peak"></span>
+            </div>
+            <div class="audio-meter-scale" aria-hidden="true">
+              <span>−72</span><span>−36</span><span>0 dB</span>
+            </div>
+            <p id="audio-meter-state" class="audio-meter-state">Esperando señal…</p>
+          </div>
+          <p id="audio-source-detail" class="setting-help" aria-live="polite">Reproduce una pista local sin enviar audio a las bocinas.</p>
+        </div>
+
         <div class="setting-group library-setting">
           <div>
             <span class="setting-label">biblioteca musical</span>
             <p id="library-root" class="path-value">Sin biblioteca seleccionada</p>
           </div>
-          <button id="choose-library" class="quiet-button" type="button">cambiar carpeta <span aria-hidden="true">↗</span></button>
+          <button id="choose-library" class="quiet-button" type="button">cambiar carpeta <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8" /></svg></button>
         </div>
 
         <label class="setting-group" for="display-select">
           <span class="setting-label">pantalla</span>
           <select id="display-select"></select>
         </label>
-
-        <label class="setting-group" for="preset-duration">
-          <span class="setting-label">segundos entre cambios</span>
-          <span class="seconds-input">
-            <input id="preset-duration" type="number" min="0" max="3600" step="1" value="35" inputmode="numeric" aria-describedby="preset-duration-note" />
-            <span aria-hidden="true">s</span>
-          </span>
-          <span id="preset-duration-note" class="setting-subtitle">0 = manual</span>
-        </label>
-      </section>
+        </div>
+      </details>
 
       <p class="setting-note">Audio reactivo, salida en cero.</p>
     </aside>

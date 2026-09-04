@@ -39,13 +39,39 @@ controls. Press `F` to leave or return to kiosk mode, and `Ctrl+Q` to quit.
 | `N` | Pick another random track |
 | `←` / `→` | Change preset |
 | `H` | Love or unlove the current preset |
-| `O` | Open the preset console |
+| `Z` | Undo the favorite you just removed |
+| `B` | Blackout the screen |
+| `O` | Open the curation panel |
 | `F` | Toggle fullscreen kiosk mode |
+| `Ctrl+Q` | Quit |
+
+Space, the arrows and `Enter` belong to whatever control has keyboard focus, so
+tabbing through the transport and pressing space activates the button you are
+on rather than pausing playback.
 
 The heart updates immediately and the status line confirms that it was saved.
 Favorite names wrap to as many lines as they need; they are never abbreviated.
 
-## Music and privacy
+## Audio sources and privacy
+
+The **audio source** control supports local library tracks and microphones on
+Linux and macOS. Microphone audio goes directly to Butterchurn through Web
+Audio: it is not recorded, written to disk, sent over the network, or connected
+to the speakers. The selected source and microphone are saved with the other
+preferences. When a live source is selected, the settings panel shows the raw
+RMS level received by Electron in dB plus a peak marker, so silence and routing
+problems are visible before the signal reaches the visual intensity control.
+
+On Linux, Pretendrop can also react to the system output. This installation is
+tuned for PulseAudio on PipeWire: it finds the monitor belonging to the current
+default sink and uses `pactl` to move only Pretendrop's recording stream to that
+monitor. It does not change the global default input or reroute another app. The
+system-audio option is disabled with a diagnostic message when `pactl`, the
+default sink, or its monitor is unavailable.
+
+On macOS, the packaged app declares why it needs microphone access. The system
+permission prompt appears the first time a microphone is selected. System-audio
+capture is intentionally not offered on macOS.
 
 On Linux, the first scan starts at `~/Music`. Choose any library from the
 console whenever you want. Pretendrop reads embedded title, artist, and album
@@ -100,13 +126,22 @@ parameters:
   muted speaker output.
 - **Transition** sets the preset crossfade duration.
 - **Vignette** sets the edge darkness from `0` to `100` percent.
+
+Those three are sliders and apply while you drag, so you set them by watching
+the screen rather than by typing a number and tabbing away.
+
 - **Quality** selects `eco`, `normal`, or `full` renderer budgets.
 - **Lock preset** stops automatic preset changes while tracks keep rotating.
 - **Track interval** selects a silent random track every N minutes; `0` keeps
   the natural end-of-track behavior.
 - **Interface** can auto-hide, stay visible, or remain hidden.
 - **New chaos** resets session shuffle history; **blackout** hides the canvas
-  without closing Pretendrop. Press `B` for blackout from the keyboard.
+  and the interface without closing Pretendrop, and stops rendering while it is
+  on. Press `B` for blackout from the keyboard.
+- **Restore defaults** puts every scene parameter back where it started.
+
+Interface text is drawn with its own dark halo, so it stays readable over a
+bright preset even with the vignette at `0`.
 
 ## Install and build
 

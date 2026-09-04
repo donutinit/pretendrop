@@ -1,13 +1,14 @@
 :root {
-  /* Monochrome Terminal — one typeface, one scale, no chroma. */
+  /* Monochrome Terminal — one typeface, one scale. Chroma is reserved for
+     exactly one job: telling the user that something failed. */
   --color-canvas: oklch(7% 0 0);
-  --color-surface: oklch(11% 0 0);
-  --color-surface-raised: oklch(16% 0 0);
-  --color-surface-active: oklch(23% 0 0);
+  --color-surface: oklch(20% 0 0);
+  --color-surface-raised: oklch(26% 0 0);
+  --color-surface-active: oklch(34% 0 0);
   --color-ink: oklch(94% 0 0);
   --color-ink-dim: oklch(76% 0 0);
-  --color-muted: oklch(60% 0 0);
-  --color-faint: oklch(40% 0 0);
+  --color-muted: oklch(62% 0 0);
+  --color-faint: oklch(55% 0 0);
   --color-rule: oklch(100% 0 0 / 0.14);
   --color-rule-strong: oklch(100% 0 0 / 0.28);
   --color-shadow: oklch(0% 0 0 / 0.64);
@@ -17,15 +18,41 @@
   --color-accent-strong: oklch(72% 0 0);
   --color-accent-ink: oklch(10% 0 0);
   --color-accent-wash: oklch(90% 0 0 / 0.12);
-  --color-success: oklch(80% 0 0);
-  --color-success-wash: oklch(80% 0 0 / 0.12);
-  --color-danger: oklch(66% 0 0);
-  --color-danger-wash: oklch(66% 0 0 / 0.12);
+  --color-success: oklch(84% 0 0);
+  --color-danger: oklch(66% 0.17 25);
+  --color-danger-wash: oklch(66% 0.17 25 / 0.14);
   --color-focus: oklch(96% 0 0);
+  --color-focus-ink: oklch(8% 0 0);
 
-  --font-display: "0xProto Nerd Font Mono", "Adwaita Mono", ui-monospace, monospace;
-  --font-body: "0xProto Nerd Font Mono", "Adwaita Mono", ui-monospace, monospace;
-  --font-mono: "0xProto Nerd Font Mono", "Adwaita Mono", ui-monospace, monospace;
+  /* Legibility over the visualizer. The interface floats on a surface that can
+     be pure white on the next frame, so every overlay glyph carries its own
+     dark halo instead of relying on the vignette. */
+  --shadow-text:
+    1px 0 0 oklch(0% 0 0 / 0.92),
+    -1px 0 0 oklch(0% 0 0 / 0.92),
+    0 1px 0 oklch(0% 0 0 / 0.92),
+    0 -1px 0 oklch(0% 0 0 / 0.92),
+    0 0 4px oklch(0% 0 0 / 0.9),
+    0 2px 10px oklch(0% 0 0 / 0.7);
+  --shadow-text-lg:
+    2px 0 0 oklch(0% 0 0 / 0.95),
+    -2px 0 0 oklch(0% 0 0 / 0.95),
+    0 2px 0 oklch(0% 0 0 / 0.95),
+    0 -2px 0 oklch(0% 0 0 / 0.95),
+    2px 2px 0 oklch(0% 0 0 / 0.95),
+    -2px 2px 0 oklch(0% 0 0 / 0.95),
+    2px -2px 0 oklch(0% 0 0 / 0.95),
+    -2px -2px 0 oklch(0% 0 0 / 0.95),
+    0 0 14px oklch(0% 0 0 / 0.9),
+    0 4px 30px oklch(0% 0 0 / 0.7);
+  /* Dark ring inside, light ring outside: survives any backdrop. */
+  --ring-focus:
+    0 0 0 var(--line-2) var(--color-focus-ink),
+    0 0 0 calc(var(--line-2) * 2) var(--color-focus);
+
+  --font-display: "Adwaita Mono", "0xProto Nerd Font Mono", ui-monospace, monospace;
+  --font-body: "Adwaita Mono", "0xProto Nerd Font Mono", ui-monospace, monospace;
+  --font-mono: "Adwaita Mono", "0xProto Nerd Font Mono", ui-monospace, monospace;
 
   --space-3xs: 0.25rem;
   --space-2xs: 0.5rem;
@@ -35,7 +62,6 @@
   --space-lg: 2rem;
   --space-xl: 3rem;
   --space-2xl: 4.5rem;
-  --space-3xl: 7rem;
 
   --text-2xs: 0.625rem;
   --text-xs: 0.75rem;
@@ -43,19 +69,14 @@
   --text-md: 1rem;
   --text-lg: 1.25rem;
   --text-xl: 1.75rem;
-  --text-2xl: 2.5rem;
-  --text-display: clamp(2.25rem, 5.3vw, 5.8rem);
 
   --line-1: 1px;
   --line-2: 2px;
   --control-sm: 2.75rem;
-  --control-md: 3.25rem;
-  --panel-width: 29rem;
+  --panel-width: 26rem;
   --radius-xs: 0;
   --radius-sm: 0;
   --radius-md: 0;
-  --radius-lg: 0;
-  --radius-round: 0;
 
   --dur-instant: 90ms;
   --dur-short: 180ms;

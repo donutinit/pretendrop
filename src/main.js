@@ -10,6 +10,13 @@ const DEFAULT_VIGNETTE_PERCENT = 42;
 const DEFAULT_TRACK_INTERVAL_MINUTES = 0;
 const MAX_TRACK_INTERVAL_MINUTES = 1440;
 const MAX_FAILED_TRACKS = 150;
+const AUDIO_METER_FLOOR_DB = -72;
+const AUDIO_METER_SIGNAL_DB = -60;
+const AUDIO_METER_UPDATE_MS = 50;
+const AUDIO_METER_PEAK_DECAY_DB_PER_SECOND = 18;
+const BUTTERCHURN_FFT_SIZE = 1024;
+const SILENT_OUTPUT_GAIN = 1e-8;
+const AUDIO_SOURCE_MODES = new Set(["library", "microphone", "system"]);
 const QUALITY_PROFILES = {
   eco: { maxScale: 0.8, maxPixels: 2_073_600 },
   normal: { maxScale: 1.5, maxPixels: 8_294_400 },
@@ -52,6 +59,17 @@ const elements = {
   closeSettings: document.querySelector("#close-settings"),
   chooseLibrary: document.querySelector("#choose-library"),
   libraryRoot: document.querySelector("#library-root"),
+  audioSource: document.querySelector("#audio-source"),
+  audioSourceDetail: document.querySelector("#audio-source-detail"),
+  audioMeter: document.querySelector("#audio-meter"),
+  audioMeterTrack: document.querySelector("#audio-meter-track"),
+  audioMeterFill: document.querySelector("#audio-meter-fill"),
+  audioMeterPeak: document.querySelector("#audio-meter-peak"),
+  audioMeterLevel: document.querySelector("#audio-meter-level"),
+  audioMeterState: document.querySelector("#audio-meter-state"),
+  systemAudioOption: document.querySelector("#system-audio-option"),
+  microphoneDeviceSetting: document.querySelector("#microphone-device-setting"),
+  microphoneDevice: document.querySelector("#microphone-device"),
   displaySelect: document.querySelector("#display-select"),
   presetDuration: document.querySelector("#preset-duration"),
   transitionDuration: document.querySelector("#transition-duration"),
@@ -62,6 +80,10 @@ const elements = {
   trackInterval: document.querySelector("#track-interval"),
   interfaceMode: document.querySelector("#interface-mode"),
   resetChaos: document.querySelector("#reset-chaos"),
+  resetDefaults: document.querySelector("#reset-defaults"),
+  reactivityValue: document.querySelector("#reactivity-value"),
+  transitionValue: document.querySelector("#transition-duration-value"),
+  vignetteValue: document.querySelector("#vignette-value"),
   toggleBlackout: document.querySelector("#toggle-blackout"),
   shuffleScope: document.querySelector("#shuffle-scope"),
   allCount: document.querySelector("#all-count"),
@@ -76,7 +98,18 @@ const elements = {
 const state = {
   audioContext: null,
   audio: null,
+  librarySource: null,
+  inputAnalyser: null,
+  inputMeterSamples: null,
   visualGain: null,
+  visualAnalyser: null,
+  visualChannelSplitter: null,
+  visualLeftAnalyser: null,
+  visualRightAnalyser: null,
+  visualAudioLevels: null,
+  silentOutput: null,
+  liveInputNode: null,
+  liveInputStream: null,
   visualizer: null,
   presets: {},
   presetNames: [],
@@ -103,16 +136,47 @@ const state = {
   presetVisits: new Map(),
   loadingTrack: false,
   paused: false,
+  audioSourceMode: "library",
+  microphoneDeviceId: "default",
+  audioCapabilities: null,
+  switchingAudioSource: false,
+  liveInputLabel: "",
+  inputMeterPeakDb: AUDIO_METER_FLOOR_DB,
+  inputMeterLastUpdate: 0,
   controlsTimer: null,
+  lastRemovedFavorite: null,
 };
 
-function setStatus(message, tone = "neutral") {
+/* The status line carries two different things: the standing state of the
+   library, and short notices about what just happened. Notices used to
+   overwrite the state permanently, so they now revert to it. */
+let statusRestoreTimer = null;
+let standingStatus = { message: "Preparando biblioteca…", tone: "neutral" };
+
+function paintStatus({ message, tone }, live = true) {
   elements.libraryStatus.textContent = message;
   elements.libraryStatus.dataset.tone = tone;
+  elements.libraryStatus.setAttribute(
+    "aria-live",
+    !live ? "off" : tone === "error" ? "assertive" : "polite",
+  );
+}
+
+function setStatus(message, tone = "neutral", { standing = false, live = true } = {}) {
+  clearTimeout(statusRestoreTimer);
+  paintStatus({ message, tone }, live);
+
+  if (standing || tone === "error") {
+    standingStatus = { message, tone };
+    return;
+  }
+
+  statusRestoreTimer = setTimeout(() => paintStatus(standingStatus), 3600);
 }
 
 function showControls(force = false) {
   if (state.interfaceMode === "hidden" && !force) return;
+  if (state.blackout && !force) return;
 
   elements.interface.classList.add("is-visible");
   document.body.classList.add("show-cursor");
@@ -143,6 +207,12 @@ function applyInterfaceMode() {
   }
 
   if (state.interfaceMode === "hidden") {
+    elements.interface.classList.remove("is-visible");
+    document.body.classList.remove("show-cursor");
+    return;
+  }
+
+  if (state.blackout) {
     elements.interface.classList.remove("is-visible");
     document.body.classList.remove("show-cursor");
     return;
@@ -200,6 +270,8 @@ function preferenceSnapshot() {
     presetLocked: state.presetLocked,
     trackIntervalMinutes: state.trackIntervalMinutes,
     interfaceMode: state.interfaceMode,
+    audioSourceMode: state.audioSourceMode,
+    microphoneDeviceId: state.microphoneDeviceId,
     favoritesSeedVersion: FAVORITES_SEED_VERSION,
   };
 }
@@ -290,6 +362,12 @@ async function loadPreferences() {
   state.interfaceMode = INTERFACE_MODES.has(saved?.interfaceMode)
     ? saved.interfaceMode
     : "auto";
+  state.audioSourceMode = AUDIO_SOURCE_MODES.has(saved?.audioSourceMode)
+    ? saved.audioSourceMode
+    : "library";
+  state.microphoneDeviceId = typeof saved?.microphoneDeviceId === "string"
+    ? saved.microphoneDeviceId
+    : "default";
 
   if (state.shuffleScope === "favorites" && state.favorites.size === 0) {
     state.shuffleScope = "all";
@@ -390,12 +468,12 @@ function updateShuffleControls() {
     state.shuffleScope === "favorites" ? "favoritos" : "todos"
   }`;
 
+  /* Roving tabindex: one stop for the group, arrows move within it. The
+     favorites option stays enabled so it can explain why it is empty. */
   for (const button of elements.shuffleScope.querySelectorAll("button")) {
     const selected = button.dataset.shuffleScope === state.shuffleScope;
-    const isFavorites = button.dataset.shuffleScope === "favorites";
-    button.classList.toggle("is-selected", selected);
-    button.setAttribute("aria-pressed", String(selected));
-    button.disabled = isFavorites && state.favorites.size === 0;
+    button.setAttribute("aria-checked", String(selected));
+    button.tabIndex = selected ? 0 : -1;
   }
 }
 
@@ -415,18 +493,28 @@ function updateSceneControls() {
   elements.quality.value = state.quality;
   elements.trackInterval.value = String(state.trackIntervalMinutes);
   elements.interfaceMode.value = state.interfaceMode;
+  elements.presetDuration.value = String(state.presetIntervalSeconds);
+  updateSliderReadouts();
+
+  /* The label stays put; aria-pressed and the selected style carry the state,
+     so a screen reader does not announce it twice. */
   elements.presetLock.classList.toggle("is-selected", state.presetLocked);
   elements.presetLock.setAttribute("aria-pressed", String(state.presetLocked));
-  elements.presetLock.textContent = state.presetLocked ? "preset fijado" : "fijar preset";
   elements.toggleBlackout.classList.toggle("is-selected", state.blackout);
   elements.toggleBlackout.setAttribute("aria-pressed", String(state.blackout));
-  elements.toggleBlackout.textContent = state.blackout ? "blackout: on" : "blackout";
+
   document.documentElement.style.setProperty(
     "--vignette-opacity",
     String(state.vignettePercent / 100),
   );
   document.body.classList.toggle("is-blackout", state.blackout);
   applyReactivity();
+}
+
+function updateSliderReadouts() {
+  elements.reactivityValue.textContent = state.reactivity.toLocaleString("es-MX");
+  elements.transitionValue.textContent = `${state.transitionSeconds.toLocaleString("es-MX")} s`;
+  elements.vignetteValue.textContent = `${state.vignettePercent.toLocaleString("es-MX")} %`;
 }
 
 function renderFavorites() {
@@ -463,7 +551,7 @@ function renderFavorites() {
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "favorite-remove";
-    remove.textContent = "♥";
+    remove.textContent = "×";
     remove.setAttribute("aria-label", `Quitar ${name} de favoritos`);
     remove.title = `Quitar ${name} de favoritos`;
     remove.addEventListener("click", () => void toggleFavorite(name));
@@ -492,9 +580,11 @@ async function toggleFavorite(name = currentPresetName()) {
   updateShuffleControls();
   renderFavorites();
 
+  state.lastRemovedFavorite = wasFavorite ? name : null;
+
   if (await persistPreferences()) {
     setStatus(
-      wasFavorite ? "favorito eliminado" : "favorito guardado",
+      wasFavorite ? "favorito eliminado · z para deshacer" : "favorito guardado",
       "ready",
     );
   } else {
@@ -502,9 +592,50 @@ async function toggleFavorite(name = currentPresetName()) {
   }
 }
 
+async function undoFavoriteRemoval() {
+  const name = state.lastRemovedFavorite;
+  if (!name || state.favorites.has(name)) return;
+
+  state.lastRemovedFavorite = null;
+  state.favorites.add(name);
+  resetShuffleDeck();
+  updateFavoriteButton();
+  updateShuffleControls();
+  renderFavorites();
+
+  if (await persistPreferences()) {
+    setStatus("favorito restaurado", "ready");
+  } else {
+    setStatus("No pude restaurar el favorito.", "error");
+  }
+}
+
+async function restoreDefaults() {
+  state.presetIntervalSeconds = DEFAULT_PRESET_INTERVAL_SECONDS;
+  state.transitionSeconds = DEFAULT_TRANSITION_SECONDS;
+  state.reactivity = DEFAULT_REACTIVITY;
+  state.vignettePercent = DEFAULT_VIGNETTE_PERCENT;
+  state.trackIntervalMinutes = DEFAULT_TRACK_INTERVAL_MINUTES;
+  state.quality = "normal";
+  state.interfaceMode = "auto";
+  state.presetLocked = false;
+
+  restartPresetTimer();
+  restartTrackTimer();
+  resizeVisualizer();
+  updateSceneControls();
+  applyInterfaceMode();
+
+  if (await persistPreferences()) {
+    setStatus("valores restaurados", "ready");
+  } else {
+    setStatus("No pude guardar los valores.", "error");
+  }
+}
+
 function setShuffleScope(scope) {
   if (scope === "favorites" && state.favorites.size === 0) {
-    setStatus("Primero agrega al menos un favorito con el corazón.", "error");
+    setStatus("Primero marca un preset con el corazón.", "error");
     return;
   }
 
@@ -576,23 +707,137 @@ function restartTrackTimer() {
   clearInterval(state.trackTimer);
   state.trackTimer = null;
 
-  if (state.trackIntervalMinutes > 0) {
+  if (state.audioSourceMode === "library" && state.trackIntervalMinutes > 0) {
     state.trackTimer = setInterval(() => {
       if (!state.paused) void playRandomTrack();
     }, state.trackIntervalMinutes * 60_000);
   }
 }
 
-function renderFrame() {
+function audioMeterPercent(decibels) {
+  return Math.min(
+    Math.max((decibels - AUDIO_METER_FLOOR_DB) / -AUDIO_METER_FLOOR_DB, 0),
+    1,
+  );
+}
+
+function resetAudioMeter() {
+  state.inputMeterPeakDb = AUDIO_METER_FLOOR_DB;
+  state.inputMeterLastUpdate = 0;
+  elements.audioMeterFill.style.transform = "scaleX(0)";
+  elements.audioMeterPeak.style.left = "0%";
+  elements.audioMeterLevel.textContent = "−∞ dB";
+  elements.audioMeterState.textContent = "Esperando señal…";
+  elements.audioMeterState.dataset.signal = "quiet";
+  elements.audioMeterTrack.setAttribute("aria-valuenow", String(AUDIO_METER_FLOOR_DB));
+  elements.audioMeterTrack.setAttribute("aria-valuetext", "Sin señal");
+}
+
+function updateAudioMeter(timestamp) {
+  if (
+    elements.audioMeter.hidden
+    || !elements.settingsPanel.classList.contains("is-open")
+    || !state.inputAnalyser
+    || !state.inputMeterSamples
+    || timestamp - state.inputMeterLastUpdate < AUDIO_METER_UPDATE_MS
+  ) {
+    return;
+  }
+
+  const elapsedSeconds = state.inputMeterLastUpdate > 0
+    ? (timestamp - state.inputMeterLastUpdate) / 1_000
+    : AUDIO_METER_UPDATE_MS / 1_000;
+  state.inputMeterLastUpdate = timestamp;
+  state.inputAnalyser.getFloatTimeDomainData(state.inputMeterSamples);
+
+  let squareSum = 0;
+  let absolutePeak = 0;
+  for (const sample of state.inputMeterSamples) {
+    squareSum += sample * sample;
+    absolutePeak = Math.max(absolutePeak, Math.abs(sample));
+  }
+
+  const rms = Math.sqrt(squareSum / state.inputMeterSamples.length);
+  const rmsDb = rms > 0 ? 20 * Math.log10(rms) : AUDIO_METER_FLOOR_DB;
+  const instantPeakDb = absolutePeak > 0
+    ? 20 * Math.log10(absolutePeak)
+    : AUDIO_METER_FLOOR_DB;
+  const levelDb = Math.min(Math.max(rmsDb, AUDIO_METER_FLOOR_DB), 0);
+  const decayedPeakDb = state.inputMeterPeakDb
+    - AUDIO_METER_PEAK_DECAY_DB_PER_SECOND * elapsedSeconds;
+  state.inputMeterPeakDb = Math.min(
+    Math.max(instantPeakDb, decayedPeakDb, AUDIO_METER_FLOOR_DB),
+    0,
+  );
+
+  const levelPercent = audioMeterPercent(levelDb);
+  const peakPercent = audioMeterPercent(state.inputMeterPeakDb);
+  const levelText = rmsDb > AUDIO_METER_FLOOR_DB
+    ? `${levelDb.toFixed(1)} dB`
+    : "−∞ dB";
+  let signalText = levelDb > AUDIO_METER_SIGNAL_DB
+    ? "Señal presente"
+    : "Sin señal detectable";
+
+  if (!state.liveInputStream) signalText = "Conectando entrada…";
+  if (state.paused) signalText = "Entrada pausada";
+
+  elements.audioMeterFill.style.transform = `scaleX(${levelPercent})`;
+  elements.audioMeterPeak.style.left = `${peakPercent * 100}%`;
+  elements.audioMeterLevel.textContent = levelText;
+  elements.audioMeterState.textContent = signalText;
+  elements.audioMeterState.dataset.signal = levelDb > AUDIO_METER_SIGNAL_DB
+    && state.liveInputStream
+    && !state.paused
+    ? "present"
+    : "quiet";
+  elements.audioMeterTrack.setAttribute("aria-valuenow", levelDb.toFixed(1));
+  elements.audioMeterTrack.setAttribute(
+    "aria-valuetext",
+    `${signalText}, ${levelText}`,
+  );
+}
+
+function renderFrame(timestamp = 0) {
+  requestAnimationFrame(renderFrame);
+  updateAudioMeter(timestamp);
+  if (state.blackout) return;
+
   try {
-    state.visualizer.render();
+    /* Butterchurn can sample a connected AudioNode itself, but Chromium may
+       leave that analyser-only branch idle for MediaStream sources. Sampling
+       the active, silently-routed graph here makes live and library inputs use
+       the same deterministic path into Butterchurn. */
+    state.visualAnalyser.getByteTimeDomainData(
+      state.visualAudioLevels.timeByteArray,
+    );
+    state.visualLeftAnalyser.getByteTimeDomainData(
+      state.visualAudioLevels.timeByteArrayL,
+    );
+    state.visualRightAnalyser.getByteTimeDomainData(
+      state.visualAudioLevels.timeByteArrayR,
+    );
+
+    const liveChannelCount = state.liveInputStream
+      ?.getAudioTracks()[0]
+      ?.getSettings()
+      ?.channelCount;
+    if (liveChannelCount === 1) {
+      state.visualAudioLevels.timeByteArrayL.set(
+        state.visualAudioLevels.timeByteArray,
+      );
+      state.visualAudioLevels.timeByteArrayR.set(
+        state.visualAudioLevels.timeByteArray,
+      );
+    }
+
+    state.visualizer.render({ audioLevels: state.visualAudioLevels });
   } catch (error) {
     const brokenPreset = state.presetNames[state.presetIndex];
     state.failedPresets.add(brokenPreset);
     console.warn(`Preset omitido durante render: ${brokenPreset}`, error);
     loadPreset(nextPresetIndex(), 0);
   }
-  requestAnimationFrame(renderFrame);
 }
 
 function getRenderSize() {
@@ -634,20 +879,353 @@ function updateTrackUi(track) {
 }
 
 function updatePlaybackUi() {
-  elements.togglePlayback.textContent = state.paused ? "PLAY" : "PAUSA";
-  elements.togglePlayback.setAttribute(
-    "aria-label",
-    state.paused ? "Reproducir" : "Pausar",
-  );
-  elements.playbackState.textContent = state.paused
-    ? "▮▮ pausado"
-    : "▶ reproduciendo";
+  elements.togglePlayback.textContent = state.paused ? "SEGUIR" : "PAUSA";
+  if (state.paused) {
+    elements.playbackState.textContent = "▮▮ pausado";
+  } else if (state.audioSourceMode === "microphone") {
+    elements.playbackState.textContent = "● micrófono activo";
+  } else if (state.audioSourceMode === "system") {
+    elements.playbackState.textContent = "● sistema activo";
+  } else {
+    elements.playbackState.textContent = "▶ reproduciendo";
+  }
   elements.togglePlayback.title = state.paused
-    ? "Reproducir (espacio)"
+    ? "Seguir (espacio)"
     : "Pausar (espacio)";
+  updateAudioSourceControls();
+}
+
+function updateAudioSourceControls() {
+  const capabilities = state.audioCapabilities;
+  const microphoneOption = elements.audioSource.querySelector('option[value="microphone"]');
+  const microphoneAvailable = capabilities?.microphone !== false;
+  const systemAvailable = capabilities?.systemAudio === true;
+  const isLibrary = state.audioSourceMode === "library";
+
+  microphoneOption.disabled = !microphoneAvailable;
+  elements.systemAudioOption.hidden = capabilities?.platform !== "linux";
+  elements.systemAudioOption.disabled = !systemAvailable;
+  elements.audioSource.value = state.audioSourceMode;
+  elements.audioSource.disabled = state.switchingAudioSource;
+  elements.microphoneDeviceSetting.hidden = state.audioSourceMode !== "microphone";
+  elements.microphoneDevice.disabled = state.switchingAudioSource;
+  elements.nextTrack.disabled = !isLibrary;
+  elements.trackInterval.disabled = !isLibrary;
+  if (elements.audioMeter.hidden !== isLibrary) {
+    elements.audioMeter.hidden = isLibrary;
+    resetAudioMeter();
+  }
+
+  if (state.audioSourceMode === "microphone") {
+    elements.audioSourceDetail.textContent = "Entrada directa para Butterchurn; no se graba ni se reproduce en las bocinas.";
+  } else if (state.audioSourceMode === "system") {
+    const outputName = state.liveInputLabel || capabilities?.systemAudioLabel || "salida predeterminada";
+    elements.audioSourceDetail.textContent = `Monitor de ${outputName}; disponible sólo en este equipo Linux.`;
+  } else if (capabilities?.platform === "linux" && !systemAvailable) {
+    elements.audioSourceDetail.textContent = capabilities.systemAudioError
+      ? `Pistas locales. Audio del sistema no disponible: ${capabilities.systemAudioError}`
+      : "Reproduce una pista local sin enviar audio a las bocinas.";
+  } else {
+    elements.audioSourceDetail.textContent = "Reproduce una pista local sin enviar audio a las bocinas.";
+  }
+}
+
+function mediaInputError(error) {
+  if (error?.name === "NotAllowedError") {
+    return "No se concedió permiso para usar el micrófono.";
+  }
+  if (error?.name === "NotFoundError") {
+    return "No encontré ningún micrófono disponible.";
+  }
+  if (error?.name === "NotReadableError") {
+    return "El sistema no pudo abrir el dispositivo de audio.";
+  }
+  if (error?.name === "OverconstrainedError") {
+    return "El micrófono guardado ya no está disponible.";
+  }
+  return error?.message || "No pude abrir la entrada de audio.";
+}
+
+function liveAudioConstraints(deviceId = "default") {
+  return {
+    audio: {
+      autoGainControl: false,
+      echoCancellation: false,
+      noiseSuppression: false,
+      channelCount: { ideal: 2 },
+      ...(deviceId !== "default" ? { deviceId: { exact: deviceId } } : {}),
+    },
+    video: false,
+  };
+}
+
+async function refreshMicrophoneDevices(preferredDeviceId = state.microphoneDeviceId) {
+  if (!navigator.mediaDevices?.enumerateDevices) return;
+
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const microphones = devices.filter(
+      (device) => device.kind === "audioinput" && device.deviceId !== "default",
+    );
+    const availableIds = new Set(microphones.map((device) => device.deviceId));
+
+    elements.microphoneDevice.replaceChildren();
+    const defaultOption = document.createElement("option");
+    defaultOption.value = "default";
+    defaultOption.textContent = "predeterminado del sistema";
+    elements.microphoneDevice.append(defaultOption);
+
+    microphones.forEach((device, index) => {
+      const option = document.createElement("option");
+      option.value = device.deviceId;
+      option.textContent = device.label || `micrófono ${index + 1}`;
+      elements.microphoneDevice.append(option);
+    });
+
+    state.microphoneDeviceId = availableIds.has(preferredDeviceId)
+      ? preferredDeviceId
+      : "default";
+    elements.microphoneDevice.value = state.microphoneDeviceId;
+  } catch (error) {
+    console.warn("No pude enumerar los micrófonos.", error);
+  }
+}
+
+function disconnectLibraryInput() {
+  if (!state.librarySource || !state.inputAnalyser) return;
+  try {
+    state.librarySource.disconnect(state.inputAnalyser);
+  } catch {
+    // La fuente ya estaba desconectada del visualizador.
+  }
+}
+
+function connectLibraryInput() {
+  disconnectLibraryInput();
+  state.librarySource.connect(state.inputAnalyser);
+}
+
+function stopLiveInput() {
+  const inputNode = state.liveInputNode;
+  const inputStream = state.liveInputStream;
+  state.liveInputNode = null;
+  state.liveInputStream = null;
+  state.liveInputLabel = "";
+
+  try {
+    inputNode?.disconnect();
+  } catch {
+    // El nodo ya estaba desconectado.
+  }
+  inputStream?.getTracks().forEach((track) => track.stop());
+}
+
+async function acquireDefaultMicrophoneStream() {
+  const prepared = state.audioCapabilities?.platform === "linux"
+    ? await window.pretendrop.audio.prepareDefaultMicrophoneCapture()
+    : null;
+  let stream = null;
+
+  try {
+    stream = await navigator.mediaDevices.getUserMedia(liveAudioConstraints());
+    if (prepared) {
+      await window.pretendrop.audio.activateLinuxCapture(prepared.token);
+    }
+    return stream;
+  } catch (error) {
+    stream?.getTracks().forEach((track) => track.stop());
+    if (prepared) {
+      await window.pretendrop.audio.cancelLinuxCapture(prepared.token);
+    }
+    throw error;
+  }
+}
+
+async function acquireMicrophoneInput() {
+  let requestedDeviceId = state.microphoneDeviceId;
+  let stream;
+
+  if (requestedDeviceId === "default") {
+    stream = await acquireDefaultMicrophoneStream();
+  } else {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(
+        liveAudioConstraints(requestedDeviceId),
+      );
+    } catch (error) {
+      if (error?.name !== "OverconstrainedError") throw error;
+      requestedDeviceId = "default";
+      state.microphoneDeviceId = "default";
+      stream = await acquireDefaultMicrophoneStream();
+    }
+  }
+
+  const track = stream.getAudioTracks()[0];
+  return {
+    stream,
+    label: requestedDeviceId === "default"
+      ? "Micrófono predeterminado"
+      : track?.label || "Micrófono",
+  };
+}
+
+async function acquireSystemInput() {
+  const prepared = await window.pretendrop.audio.prepareSystemCapture();
+  let stream = null;
+
+  try {
+    stream = await navigator.mediaDevices.getUserMedia(liveAudioConstraints());
+    const activated = await window.pretendrop.audio.activateLinuxCapture(prepared.token);
+    return { stream, label: activated.label || prepared.label };
+  } catch (error) {
+    stream?.getTracks().forEach((track) => track.stop());
+    await window.pretendrop.audio.cancelLinuxCapture(prepared.token);
+    throw error;
+  }
+}
+
+function attachLiveInput(mode, acquired) {
+  const inputNode = state.audioContext.createMediaStreamSource(acquired.stream);
+
+  state.audio.pause();
+  disconnectLibraryInput();
+  stopLiveInput();
+
+  state.audioSourceMode = mode;
+  state.liveInputStream = acquired.stream;
+  state.liveInputNode = inputNode;
+  state.liveInputLabel = acquired.label;
+  state.liveInputNode.connect(state.inputAnalyser);
+  state.paused = false;
+
+  for (const track of acquired.stream.getAudioTracks()) {
+    track.addEventListener("ended", () => {
+      if (state.liveInputStream !== acquired.stream) return;
+      state.paused = true;
+      updatePlaybackUi();
+      setStatus("La entrada de audio se desconectó.", "error");
+    });
+  }
+
+  if (mode === "microphone") {
+    elements.trackTitle.textContent = acquired.label;
+    elements.trackDetail.textContent = "Entrada de micrófono · sin grabación";
+    setStatus("micrófono activo · salida desconectada", "ready", { standing: true });
+  } else {
+    elements.trackTitle.textContent = "Audio del sistema";
+    elements.trackDetail.textContent = acquired.label;
+    setStatus("sistema activo · monitor PipeWire", "ready", { standing: true });
+  }
+
+  restartTrackTimer();
+  updatePlaybackUi();
+}
+
+async function activateLibraryInput() {
+  stopLiveInput();
+  state.audioSourceMode = "library";
+  connectLibraryInput();
+  await state.audioContext.resume();
+
+  if (!state.currentTrack) {
+    await playRandomTrack();
+    return;
+  }
+
+  updateTrackUi(state.currentTrack);
+  try {
+    await state.audio.play();
+    state.paused = false;
+    setStatus("audio reactivo · salida silenciada", "ready", { standing: true });
+  } catch {
+    await playRandomTrack();
+  }
+  restartTrackTimer();
+  updatePlaybackUi();
+}
+
+async function switchAudioSource(mode, { force = false, persist = true } = {}) {
+  const requestedMode = AUDIO_SOURCE_MODES.has(mode) ? mode : "library";
+  const previousMode = state.audioSourceMode;
+
+  if (state.switchingAudioSource) return false;
+  if (!force && requestedMode === previousMode) return true;
+
+  state.switchingAudioSource = true;
+  updateAudioSourceControls();
+
+  try {
+    if (requestedMode === "system" && !state.audioCapabilities?.systemAudio) {
+      throw new Error(state.audioCapabilities?.systemAudioError || "El audio del sistema no está disponible.");
+    }
+    if (requestedMode === "microphone" && !state.audioCapabilities?.microphone) {
+      throw new Error("El micrófono no está disponible en esta plataforma.");
+    }
+
+    if (requestedMode === "library") {
+      await activateLibraryInput();
+    } else {
+      await state.audioContext.resume();
+      if (state.liveInputStream) {
+        stopLiveInput();
+        await new Promise((resolve) => window.setTimeout(resolve, 100));
+      }
+      const acquired = requestedMode === "microphone"
+        ? await acquireMicrophoneInput()
+        : await acquireSystemInput();
+      attachLiveInput(requestedMode, acquired);
+      if (requestedMode === "microphone") {
+        await refreshMicrophoneDevices(state.microphoneDeviceId);
+      }
+    }
+
+    if (persist) await persistPreferences();
+    return true;
+  } catch (error) {
+    if (!state.liveInputStream && previousMode !== "library") {
+      try {
+        const restored = previousMode === "microphone"
+          ? await acquireMicrophoneInput()
+          : await acquireSystemInput();
+        attachLiveInput(previousMode, restored);
+      } catch (restoreError) {
+        console.warn("No pude restaurar la entrada anterior.", restoreError);
+        state.audioSourceMode = "library";
+        connectLibraryInput();
+        state.paused = true;
+        updatePlaybackUi();
+      }
+    }
+    elements.audioSource.value = state.audioSourceMode;
+    setStatus(mediaInputError(error), "error");
+    return false;
+  } finally {
+    state.switchingAudioSource = false;
+    updateAudioSourceControls();
+  }
+}
+
+async function initializeAudioSources() {
+  state.audioCapabilities = await window.pretendrop.audio.getCapabilities();
+  const savedMode = state.audioSourceMode;
+
+  if (state.audioSourceMode === "system" && !state.audioCapabilities.systemAudio) {
+    state.audioSourceMode = "library";
+  }
+  if (state.audioSourceMode === "microphone" && !state.audioCapabilities.microphone) {
+    state.audioSourceMode = "library";
+  }
+
+  await refreshMicrophoneDevices(state.microphoneDeviceId);
+  updateAudioSourceControls();
+  if (state.audioSourceMode !== savedMode) await persistPreferences();
 }
 
 async function playRandomTrack() {
+  if (state.audioSourceMode !== "library") {
+    setStatus("El cambio de pista sólo aplica a la biblioteca.");
+    return false;
+  }
   if (state.loadingTrack) return;
   state.loadingTrack = true;
   setStatus("Eligiendo una canción…");
@@ -665,15 +1243,33 @@ async function playRandomTrack() {
     state.paused = false;
     updatePlaybackUi();
     restartTrackTimer();
-    setStatus("audio reactivo · salida silenciada", "ready");
+    setStatus("audio reactivo · salida silenciada", "ready", { standing: true });
+    return true;
   } catch (error) {
     setStatus(`No pude reproducir: ${error.message}`, "error");
+    state.paused = true;
+    updatePlaybackUi();
+    return false;
   } finally {
     state.loadingTrack = false;
   }
 }
 
 async function togglePlayback() {
+  if (state.audioSourceMode !== "library") {
+    state.paused = !state.paused;
+    state.liveInputStream?.getAudioTracks().forEach((track) => {
+      track.enabled = !state.paused;
+    });
+    updatePlaybackUi();
+    setStatus(
+      state.paused ? "entrada pausada" : `${state.audioSourceMode === "system" ? "sistema" : "micrófono"} activo`,
+      "ready",
+      { standing: true },
+    );
+    return;
+  }
+
   if (!state.currentTrack) {
     await playRandomTrack();
     return;
@@ -713,11 +1309,22 @@ function toggleBlackout() {
   state.blackout = !state.blackout;
   updateSceneControls();
   setStatus(state.blackout ? "blackout activo" : "blackout apagado", "ready");
+
+  if (state.blackout && !elements.settingsPanel.classList.contains("is-open")) {
+    clearTimeout(state.controlsTimer);
+    elements.interface.classList.remove("is-visible");
+    document.body.classList.remove("show-cursor");
+  } else if (!state.blackout) {
+    applyInterfaceMode();
+  }
 }
 
 function openSettings(open) {
   elements.settingsPanel.classList.toggle("is-open", open);
-  elements.settingsPanel.setAttribute("aria-hidden", String(!open));
+  /* inert does what aria-hidden could not: takes the closed panel out of the
+     tab order, and holds focus inside it while it is open. */
+  elements.settingsPanel.inert = !open;
+  elements.interface.inert = open;
   document.body.classList.toggle("panel-open", open);
   if (open) {
     elements.interface.classList.add("is-visible");
@@ -746,7 +1353,9 @@ async function chooseLibrary() {
 async function indexLibrary(root) {
   try {
     await window.pretendrop.library.scan(root);
-    await playRandomTrack();
+    if (state.audioSourceMode === "library") {
+      await playRandomTrack();
+    }
   } catch (error) {
     setStatus(error.message, "error");
   }
@@ -799,18 +1408,45 @@ async function initVisualizer() {
 
   state.audio = new Audio();
   state.audio.preload = "auto";
-  const audioSource = state.audioContext.createMediaElementSource(state.audio);
-  const silentOutput = state.audioContext.createGain();
+  state.librarySource = state.audioContext.createMediaElementSource(state.audio);
+  state.inputAnalyser = state.audioContext.createAnalyser();
   state.visualGain = state.audioContext.createGain();
-  silentOutput.gain.value = 0;
-  audioSource.connect(silentOutput);
-  silentOutput.connect(state.audioContext.destination);
-  audioSource.connect(state.visualGain);
-  state.visualizer.connectAudio(state.visualGain);
+  state.visualAnalyser = state.audioContext.createAnalyser();
+  state.visualChannelSplitter = state.audioContext.createChannelSplitter(2);
+  state.visualLeftAnalyser = state.audioContext.createAnalyser();
+  state.visualRightAnalyser = state.audioContext.createAnalyser();
+  state.silentOutput = state.audioContext.createGain();
+  state.inputAnalyser.fftSize = BUTTERCHURN_FFT_SIZE;
+  state.inputMeterSamples = new Float32Array(state.inputAnalyser.fftSize);
+  state.visualAnalyser.fftSize = BUTTERCHURN_FFT_SIZE;
+  state.visualLeftAnalyser.fftSize = BUTTERCHURN_FFT_SIZE;
+  state.visualRightAnalyser.fftSize = BUTTERCHURN_FFT_SIZE;
+  state.visualAudioLevels = {
+    timeByteArray: new Uint8Array(BUTTERCHURN_FFT_SIZE),
+    timeByteArrayL: new Uint8Array(BUTTERCHURN_FFT_SIZE),
+    timeByteArrayR: new Uint8Array(BUTTERCHURN_FFT_SIZE),
+  };
+  state.visualAudioLevels.timeByteArray.fill(128);
+  state.visualAudioLevels.timeByteArrayL.fill(128);
+  state.visualAudioLevels.timeByteArrayR.fill(128);
+  /* An exact zero lets Chromium optimize away the live analyser branch. At
+     -160 dB this keeps Web Audio rendering while quantizing to silence at the
+     physical output, so system capture cannot feed back into itself. */
+  state.silentOutput.gain.value = SILENT_OUTPUT_GAIN;
+  state.inputAnalyser.connect(state.visualGain);
+  state.visualGain.connect(state.visualAnalyser);
+  state.visualGain.connect(state.visualChannelSplitter);
+  state.visualChannelSplitter.connect(state.visualLeftAnalyser, 0);
+  state.visualChannelSplitter.connect(state.visualRightAnalyser, 1);
+  state.visualGain.connect(state.silentOutput);
+  state.silentOutput.connect(state.audioContext.destination);
   applyReactivity();
 
-  state.audio.addEventListener("ended", () => void playRandomTrack());
+  state.audio.addEventListener("ended", () => {
+    if (state.audioSourceMode === "library") void playRandomTrack();
+  });
   state.audio.addEventListener("error", () => {
+    if (state.audioSourceMode !== "library") return;
     if (state.currentTrack) {
       state.failedTracks.add(state.currentTrack.path);
       if (state.failedTracks.size > MAX_FAILED_TRACKS) {
@@ -824,6 +1460,17 @@ async function initVisualizer() {
   renderFrame();
 }
 
+function bindLiveSlider(input, apply) {
+  const run = (persist) => {
+    apply(input.value);
+    updateSceneControls();
+    if (persist) void persistPreferences();
+  };
+
+  input.addEventListener("input", () => run(false));
+  input.addEventListener("change", () => run(true));
+}
+
 function bindControls() {
   elements.previousPreset.addEventListener("click", previousPreset);
   elements.nextPreset.addEventListener("click", nextPreset);
@@ -834,8 +1481,16 @@ function bindControls() {
   elements.closeSettings.addEventListener("click", () => openSettings(false));
   elements.settingsScrim.addEventListener("click", () => openSettings(false));
   elements.chooseLibrary.addEventListener("click", () => void chooseLibrary());
+  elements.audioSource.addEventListener("change", () => {
+    void switchAudioSource(elements.audioSource.value);
+  });
+  elements.microphoneDevice.addEventListener("change", () => {
+    state.microphoneDeviceId = elements.microphoneDevice.value;
+    void switchAudioSource("microphone", { force: true });
+  });
   elements.presetLock.addEventListener("click", togglePresetLock);
   elements.resetChaos.addEventListener("click", resetChaos);
+  elements.resetDefaults.addEventListener("click", () => void restoreDefaults());
   elements.toggleBlackout.addEventListener("click", toggleBlackout);
 
   elements.presetDuration.addEventListener("change", () => {
@@ -848,39 +1503,18 @@ function bindControls() {
     void persistPreferences();
   });
 
-  elements.transitionDuration.addEventListener("change", () => {
-    state.transitionSeconds = clampNumber(
-      elements.transitionDuration.value,
-      0,
-      15,
-      DEFAULT_TRANSITION_SECONDS,
-      1,
-    );
-    updateSceneControls();
-    void persistPreferences();
+  /* These three are perceptual: you set them by watching the result, so they
+     apply on every input and only hit the disk when the drag ends. */
+  bindLiveSlider(elements.transitionDuration, (value) => {
+    state.transitionSeconds = clampNumber(value, 0, 15, DEFAULT_TRANSITION_SECONDS, 1);
   });
 
-  elements.reactivity.addEventListener("change", () => {
-    state.reactivity = clampNumber(
-      elements.reactivity.value,
-      0.1,
-      3,
-      DEFAULT_REACTIVITY,
-      1,
-    );
-    updateSceneControls();
-    void persistPreferences();
+  bindLiveSlider(elements.reactivity, (value) => {
+    state.reactivity = clampNumber(value, 0.1, 3, DEFAULT_REACTIVITY, 1);
   });
 
-  elements.vignette.addEventListener("change", () => {
-    state.vignettePercent = clampNumber(
-      elements.vignette.value,
-      0,
-      100,
-      DEFAULT_VIGNETTE_PERCENT,
-    );
-    updateSceneControls();
-    void persistPreferences();
+  bindLiveSlider(elements.vignette, (value) => {
+    state.vignettePercent = clampNumber(value, 0, 100, DEFAULT_VIGNETTE_PERCENT);
   });
 
   elements.quality.addEventListener("change", () => {
@@ -909,6 +1543,9 @@ function bindControls() {
       ? elements.interfaceMode.value
       : "auto";
     updateSceneControls();
+    if (state.interfaceMode === "hidden") {
+      setStatus("interfaz oculta · pulsa O para volver", "ready", { standing: true });
+    }
     applyInterfaceMode();
     void persistPreferences();
   });
@@ -916,6 +1553,19 @@ function bindControls() {
   elements.shuffleScope.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-shuffle-scope]");
     if (button) setShuffleScope(button.dataset.shuffleScope);
+  });
+
+  elements.shuffleScope.addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    const buttons = [...elements.shuffleScope.querySelectorAll("button")];
+    const current = buttons.indexOf(event.target.closest("button"));
+    const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : -1;
+    const next = buttons[(current + step + buttons.length) % buttons.length];
+    next.focus();
+    setShuffleScope(next.dataset.shuffleScope);
   });
 
   elements.shuffleStyle.addEventListener("change", () => {
@@ -944,17 +1594,28 @@ function bindControls() {
       return;
     }
 
+    /* Space activates the focused button; the arrows move inside a radio
+       group. Only claim those keys when nothing else owns them. */
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    const onButton = target?.closest("button, a[href]") != null;
+    const inRadioGroup = target?.closest('[role="radiogroup"]') != null;
+
     if (event.key === " ") {
+      if (onButton) return;
       event.preventDefault();
       void togglePlayback();
     } else if (event.key === "ArrowRight") {
+      if (inRadioGroup) return;
       nextPreset();
     } else if (event.key === "ArrowLeft") {
+      if (inRadioGroup) return;
       previousPreset();
     } else if (event.key.toLowerCase() === "n") {
       void playRandomTrack();
     } else if (event.key.toLowerCase() === "h") {
       void toggleFavorite();
+    } else if (event.key.toLowerCase() === "z") {
+      void undoFavoriteRemoval();
     } else if (event.key.toLowerCase() === "o") {
       openSettings(!elements.settingsPanel.classList.contains("is-open"));
     } else if (event.key.toLowerCase() === "f") {
@@ -962,26 +1623,43 @@ function bindControls() {
     } else if (event.key.toLowerCase() === "b") {
       toggleBlackout();
     } else if (event.key === "Escape") {
-      openSettings(false);
+      if (elements.settingsPanel.classList.contains("is-open")) openSettings(false);
+      return;
     }
 
     showControls();
   });
 
   window.addEventListener("resize", resizeVisualizer);
+  navigator.mediaDevices?.addEventListener("devicechange", () => {
+    void refreshMicrophoneDevices(state.microphoneDeviceId);
+  });
 }
 
 function bindLibraryEvents() {
+  /* Progress fires every ~180 ms. It stays in the status line, announcements
+     off, so it neither floods a live region nor overwrites artist and album. */
   window.pretendrop.onLibraryProgress(({ tracks, foldersVisited }) => {
-    setStatus(`Indexando: ${tracks.toLocaleString("es-MX")} pistas`);
-    if (foldersVisited) {
-      elements.trackDetail.textContent = `${foldersVisited.toLocaleString("es-MX")} carpetas revisadas`;
-    }
+    const folders = foldersVisited
+      ? ` · ${foldersVisited.toLocaleString("es-MX")} carpetas`
+      : "";
+    setStatus(
+      `Indexando: ${tracks.toLocaleString("es-MX")} pistas${folders}`,
+      "neutral",
+      { standing: true, live: false },
+    );
   });
 
-  window.pretendrop.onLibraryReady(({ count, root }) => {
+  window.pretendrop.onLibraryReady(({ count, root, unreadableFolders }) => {
     elements.libraryRoot.textContent = root;
-    setStatus(`${count.toLocaleString("es-MX")} pistas listas`, "ready");
+    const skipped = unreadableFolders > 0
+      ? ` · ${unreadableFolders.toLocaleString("es-MX")} carpetas sin leer`
+      : "";
+    setStatus(
+      `${count.toLocaleString("es-MX")} pistas listas${skipped}`,
+      "ready",
+      { standing: true },
+    );
   });
 
   window.pretendrop.onLibraryError(({ message }) => setStatus(message, "error"));
@@ -993,9 +1671,18 @@ async function boot() {
     await initVisualizer();
     bindControls();
     await populateDisplays();
+    await initializeAudioSources();
     const root = await window.pretendrop.library.getRoot();
     elements.libraryRoot.textContent = root;
-    await indexLibrary(root);
+    const preferredMode = state.audioSourceMode;
+    const activated = await switchAudioSource(preferredMode, {
+      force: true,
+      persist: false,
+    });
+    if (!activated && preferredMode !== "library") {
+      state.audioSourceMode = "library";
+      await switchAudioSource("library", { force: true });
+    }
   } catch (error) {
     console.error(error);
     setStatus(error.message || "Pretendrop no pudo iniciar.", "error");

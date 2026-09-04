@@ -1,11 +1,17 @@
-const { app, BrowserWindow, dialog, ipcMain, screen } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, screen, session } = require("electron");
+const { execFile } = require("node:child_process");
+const { randomUUID } = require("node:crypto");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
+const { promisify } = require("node:util");
 
 const DEFAULT_LIBRARY_ROOT = path.join(os.homedir(), "Music");
-const PREFERENCES_SCHEMA_VERSION = 3;
+const PREFERENCES_SCHEMA_VERSION = 4;
+const execFileAsync = promisify(execFile);
+const PACTL_TIMEOUT_MS = 3_000;
+const LINUX_CAPTURE_TIMEOUT_MS = 3_000;
 const AUDIO_EXTENSIONS = new Set([
   ".aac",
   ".aif",
@@ -25,6 +31,7 @@ let mainWindow = null;
 let kioskMode = true;
 let activeScan = null;
 let metadataModulePromise = null;
+let pendingLinuxCapture = null;
 const library = {
   root: DEFAULT_LIBRARY_ROOT,
   tracks: [],
@@ -148,6 +155,12 @@ function normalizePreferences(value) {
     interfaceMode: ["auto", "visible", "hidden"].includes(value?.interfaceMode)
       ? value.interfaceMode
       : "auto",
+    audioSourceMode: ["library", "microphone", "system"].includes(value?.audioSourceMode)
+      ? value.audioSourceMode
+      : "library",
+    microphoneDeviceId: typeof value?.microphoneDeviceId === "string"
+      ? value.microphoneDeviceId.slice(0, 512)
+      : "default",
     favoritesSeedVersion: Math.max(0, Math.round(Number(value?.favoritesSeedVersion)) || 0),
   };
 }
@@ -352,7 +365,7 @@ function createWindow() {
     height: target.bounds.height,
     show: false,
     title: "Pretendrop",
-    backgroundColor: "#050507",
+    backgroundColor: "#010101",
     autoHideMenuBar: true,
     fullscreen: true,
     kiosk: true,
@@ -387,6 +400,196 @@ function getDisplays() {
   }));
 }
 
+async function runPactl(args) {
+  try {
+    const { stdout } = await execFileAsync("pactl", args, {
+      encoding: "utf8",
+      maxBuffer: 4 * 1024 * 1024,
+      timeout: PACTL_TIMEOUT_MS,
+    });
+    return stdout.trim();
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      throw new Error("Esta captura necesita pactl, pero no está instalado.");
+    }
+
+    const detail = String(error.stderr || error.message || "").trim();
+    throw new Error(
+      detail
+        ? `PipeWire/PulseAudio rechazó la captura: ${detail}`
+        : "PipeWire/PulseAudio no respondió.",
+    );
+  }
+}
+
+async function pactlJson(args) {
+  const output = await runPactl(["--format=json", ...args]);
+  try {
+    return JSON.parse(output || "[]");
+  } catch {
+    throw new Error("pactl devolvió una respuesta que Pretendrop no reconoce.");
+  }
+}
+
+async function getLinuxSystemMonitor() {
+  if (process.platform !== "linux") {
+    throw new Error("El audio del sistema sólo está disponible en Linux.");
+  }
+
+  const defaultSink = await runPactl(["get-default-sink"]);
+  const sources = await pactlJson(["list", "sources"]);
+  const expectedName = `${defaultSink}.monitor`;
+  const monitor = sources.find((source) => source.name === expectedName)
+    || sources.find((source) => (
+      source.properties?.["device.class"] === "monitor"
+      && source.properties?.["node.name"] === defaultSink
+    ));
+
+  if (!monitor) {
+    throw new Error(`No encontré el monitor de la salida ${defaultSink}.`);
+  }
+
+  return {
+    name: monitor.name,
+    label: String(monitor.description || defaultSink).replace(/^Monitor of /i, ""),
+  };
+}
+
+async function getLinuxDefaultMicrophone() {
+  if (process.platform !== "linux") {
+    throw new Error("La selección explícita del micrófono sólo aplica a Linux.");
+  }
+
+  const defaultSource = await runPactl(["get-default-source"]);
+  const sources = await pactlJson(["list", "sources"]);
+  const microphone = sources.find((source) => source.name === defaultSource);
+
+  if (!microphone || microphone.properties?.["device.class"] === "monitor") {
+    throw new Error("La entrada predeterminada de Linux no es un micrófono.");
+  }
+
+  return {
+    name: microphone.name,
+    label: String(microphone.description || defaultSource),
+  };
+}
+
+async function listPretendropSourceOutputs() {
+  const outputs = await pactlJson(["list", "source-outputs"]);
+  return outputs.filter((output) => (
+    output.properties?.["application.name"] === app.getName()
+    && output.properties?.["media.name"] === "RecordStream"
+  ));
+}
+
+async function getAudioCapabilities() {
+  const capabilities = {
+    platform: process.platform,
+    microphone: process.platform === "linux" || process.platform === "darwin",
+    systemAudio: false,
+    systemAudioLabel: "",
+    systemAudioError: "",
+  };
+
+  if (process.platform === "linux") {
+    try {
+      const monitor = await getLinuxSystemMonitor();
+      capabilities.systemAudio = true;
+      capabilities.systemAudioLabel = monitor.label;
+    } catch (error) {
+      capabilities.systemAudioError = error.message;
+    }
+  }
+
+  return capabilities;
+}
+
+async function prepareLinuxCapture(target) {
+  const existingOutputs = await listPretendropSourceOutputs();
+  const token = randomUUID();
+
+  pendingLinuxCapture = {
+    token,
+    target,
+    existingIds: new Set(existingOutputs.map((output) => String(output.index))),
+    expiresAt: Date.now() + LINUX_CAPTURE_TIMEOUT_MS,
+  };
+
+  return { token, label: target.label };
+}
+
+async function prepareLinuxSystemCapture() {
+  return prepareLinuxCapture(await getLinuxSystemMonitor());
+}
+
+async function prepareLinuxDefaultMicrophoneCapture() {
+  return prepareLinuxCapture(await getLinuxDefaultMicrophone());
+}
+
+function cancelLinuxCapture(token) {
+  if (pendingLinuxCapture?.token === token) {
+    pendingLinuxCapture = null;
+  }
+}
+
+async function activateLinuxCapture(token) {
+  const pending = pendingLinuxCapture;
+  if (!pending || pending.token !== token || pending.expiresAt < Date.now()) {
+    pendingLinuxCapture = null;
+    throw new Error("La solicitud de captura de audio expiró.");
+  }
+
+  while (Date.now() <= pending.expiresAt) {
+    const outputs = await listPretendropSourceOutputs();
+    const newOutputs = outputs.filter(
+      (output) => !pending.existingIds.has(String(output.index)),
+    );
+
+    if (newOutputs.length > 0) {
+      for (const output of newOutputs) {
+        await runPactl([
+          "move-source-output",
+          String(output.index),
+          pending.target.name,
+        ]);
+      }
+
+      pendingLinuxCapture = null;
+      return { label: pending.target.label, streams: newOutputs.length };
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 75));
+  }
+
+  pendingLinuxCapture = null;
+  throw new Error("No apareció el stream de captura de Pretendrop en PipeWire.");
+}
+
+function isTrustedMediaRequest(webContents) {
+  if (!mainWindow || webContents !== mainWindow.webContents) return false;
+  const currentUrl = webContents.getURL();
+  const appUrl = pathToFileURL(path.join(__dirname, "..", "dist") + path.sep).toString();
+  const devServer = process.env.PRETENDROP_DEV_SERVER_URL;
+  return currentUrl.startsWith(appUrl) || (devServer && currentUrl.startsWith(devServer));
+}
+
+function configureMediaPermissions() {
+  const { defaultSession } = session;
+
+  defaultSession.setPermissionCheckHandler((webContents, permission, _origin, details) => (
+    permission === "media"
+    && details?.mediaType === "audio"
+    && isTrustedMediaRequest(webContents)
+  ));
+
+  defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    const requestedTypes = Array.isArray(details?.mediaTypes) ? details.mediaTypes : [];
+    const requestsOnlyAudio = requestedTypes.length === 0
+      || (requestedTypes.includes("audio") && !requestedTypes.includes("video"));
+    callback(permission === "media" && requestsOnlyAudio && isTrustedMediaRequest(webContents));
+  });
+}
+
 ipcMain.handle("library:scan", (_event, root) => scanLibrary(root || library.root));
 ipcMain.handle("library:get-root", () => library.root);
 ipcMain.handle("library:random-track", (_event, excludedPaths) =>
@@ -404,6 +607,18 @@ ipcMain.handle("library:choose-root", async () => {
 
 ipcMain.handle("preferences:load", () => loadPreferences());
 ipcMain.handle("preferences:save", (_event, preferences) => savePreferences(preferences));
+
+ipcMain.handle("audio:get-capabilities", () => getAudioCapabilities());
+ipcMain.handle("audio:prepare-system-capture", () => prepareLinuxSystemCapture());
+ipcMain.handle("audio:prepare-default-microphone-capture", () =>
+  prepareLinuxDefaultMicrophoneCapture(),
+);
+ipcMain.handle("audio:activate-linux-capture", (_event, token) =>
+  activateLinuxCapture(token),
+);
+ipcMain.handle("audio:cancel-linux-capture", (_event, token) => {
+  cancelLinuxCapture(token);
+});
 
 ipcMain.handle("window:get-displays", () => getDisplays());
 ipcMain.handle("window:set-display", (_event, displayId) => {
@@ -439,6 +654,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(() => {
+    configureMediaPermissions();
     createWindow();
 
     app.on("activate", () => {

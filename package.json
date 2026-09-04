@@ -73,6 +73,9 @@
     },
     "mac": {
       "category": "public.app-category.music",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Pretendrop usa el micrófono seleccionado para hacer reaccionar los visuales. El audio no se graba ni se transmite."
+      },
       "target": [
         "dmg",
         "zip"

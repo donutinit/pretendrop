@@ -18,6 +18,16 @@ contextBridge.exposeInMainWorld("pretendrop", {
     load: () => ipcRenderer.invoke("preferences:load"),
     save: (preferences) => ipcRenderer.invoke("preferences:save", preferences),
   },
+  audio: {
+    getCapabilities: () => ipcRenderer.invoke("audio:get-capabilities"),
+    prepareSystemCapture: () => ipcRenderer.invoke("audio:prepare-system-capture"),
+    prepareDefaultMicrophoneCapture: () =>
+      ipcRenderer.invoke("audio:prepare-default-microphone-capture"),
+    activateLinuxCapture: (token) =>
+      ipcRenderer.invoke("audio:activate-linux-capture", token),
+    cancelLinuxCapture: (token) =>
+      ipcRenderer.invoke("audio:cancel-linux-capture", token),
+  },
   window: {
     getDisplays: () => ipcRenderer.invoke("window:get-displays"),
     setDisplay: (displayId) => ipcRenderer.invoke("window:set-display", displayId),

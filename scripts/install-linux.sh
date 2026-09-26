@@ -24,16 +24,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if ! command -v bun >/dev/null 2>&1; then
-  printf '%s\n' 'Install Bun before running this installer: https://bun.sh' >&2
+if ! command -v npm >/dev/null 2>&1; then
+  printf '%s\n' 'Install Node.js 22.12 or newer before running this installer: https://nodejs.org' >&2
   exit 1
 fi
 
 if test ! -x "$pretendrop_root/node_modules/electron/dist/electron"; then
-  (cd "$pretendrop_root" && bun install --frozen-lockfile)
+  (cd "$pretendrop_root" && npm ci && npm run electron:binary)
 fi
 
-(cd "$pretendrop_root" && bun run build)
+(cd "$pretendrop_root" && npm run build)
 chmod +x "$pretendrop_launcher"
 mkdir -p "$pretendrop_applications_dir" "$(dirname "$pretendrop_config_file")"
 

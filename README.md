@@ -12,20 +12,26 @@ favorites, and three deliberately different shuffle engines.
 
 ## Start it
 
-Pretendrop requires [Bun](https://bun.sh/).
+Pretendrop requires [Node.js](https://nodejs.org/) 22.12 or newer.
 
 ```bash
 cd ~/src/pretendrop
-bun install
-bun run build
-bun run start
+npm ci
+npm run electron:binary
+npm run build
+npm run start
 ```
+
+Dependencies are pinned to exact versions and `.npmrc` disables install scripts,
+so `npm ci` does not download Electron by itself. `npm run electron:binary` runs
+Electron's own installer on purpose: it fetches the pinned release and checks it
+against the checksums shipped in the package.
 
 For live UI development, run these in separate terminals:
 
 ```bash
-bun run dev
-bun run dev:desktop
+npm run dev
+npm run dev:desktop
 ```
 
 The regular app opens fullscreen in kiosk mode. Move the pointer to reveal its
@@ -93,7 +99,7 @@ The file is plain JSON and is created automatically on first run. Existing
 Butter preferences are migrated once if they are found, without deleting the
 old file. Set `PRETENDROP_PREFERENCES_FILE` to use an explicit JSON path.
 
-When `~/dot` exists, `bun run install:linux` keeps the plain JSON in your
+When `~/dot` exists, `npm run install:linux` keeps the plain JSON in your
 private dotfiles source and exposes it at the standard XDG path:
 
 ```text
@@ -148,7 +154,7 @@ bright preset even with the vignette at `0`.
 ### Linux and Rofi
 
 ```bash
-bun run install:linux
+npm run install:linux
 rofi -show drun
 ```
 
@@ -159,7 +165,7 @@ system-wide install.
 To make distributable Linux artifacts:
 
 ```bash
-bun run dist:linux
+npm run dist:linux
 ```
 
 This creates an AppImage and a tarball in `release/`.
@@ -169,7 +175,7 @@ This creates an AppImage and a tarball in `release/`.
 Run this on a Mac:
 
 ```bash
-bun run install:mac
+npm run install:mac
 ```
 
 It generates a DMG and ZIP in `release/`. Mount the DMG and drag

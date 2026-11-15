@@ -95,7 +95,10 @@ $XDG_CONFIG_HOME/pretendrop/preferences.json
 # or ~/.config/pretendrop/preferences.json when XDG_CONFIG_HOME is unset
 ```
 
-The file is plain JSON and is created automatically on first run. Existing
+The file is plain JSON and is created automatically on first run. If a hand
+edit leaves it unparseable, Pretendrop copies it to
+`preferences.json.broken-<timestamp>` before writing defaults, so the favorites
+can be recovered from the copy. Existing
 Butter preferences are migrated once if they are found, without deleting the
 old file. Set `PRETENDROP_PREFERENCES_FILE` to use an explicit JSON path.
 

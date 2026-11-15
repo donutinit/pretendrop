@@ -30,6 +30,7 @@ const AUDIO_EXTENSIONS = new Set([
 let mainWindow = null;
 let kioskMode = true;
 let activeScan = null;
+let scanGeneration = 0;
 let metadataModulePromise = null;
 let pendingLinuxCapture = null;
 const library = {
@@ -165,6 +166,20 @@ function normalizePreferences(value) {
   };
 }
 
+/* The file is meant to be edited by hand. If it stops parsing, the next save
+   would replace it with defaults and the favorites would be gone, so a copy
+   is kept next to it first. */
+async function backUpUnreadablePreferences(preferencesPath) {
+  try {
+    const realPath = await resolvePreferencesWritePath(preferencesPath);
+    const backupPath = `${realPath}.broken-${Date.now()}`;
+    await fs.copyFile(realPath, backupPath);
+    console.warn(`Preferencias ilegibles; copia guardada en ${backupPath}.`);
+  } catch (error) {
+    console.warn(`No pude respaldar ${preferencesPath}.`, error.message);
+  }
+}
+
 async function loadPreferences() {
   const { targetPath, legacyPaths } = await getPreferencesLocations();
   const candidates = [targetPath, ...legacyPaths.filter((entry) => entry !== targetPath)];
@@ -180,9 +195,9 @@ async function loadPreferences() {
         preferences: normalizePreferences(rawPreferences),
       };
     } catch (error) {
-      if (error.code !== "ENOENT") {
-        console.warn(`No pude leer ${sourcePath}.`, error.message);
-      }
+      if (error.code === "ENOENT") continue;
+      console.warn(`No pude leer ${sourcePath}.`, error.message);
+      if (sourcePath === targetPath) await backUpUnreadablePreferences(targetPath);
     }
   }
 
@@ -193,12 +208,30 @@ async function resolvePreferencesWritePath(preferencesPath) {
   try {
     return await fs.realpath(preferencesPath);
   } catch (error) {
-    if (error.code === "ENOENT") return preferencesPath;
-    throw error;
+    if (error.code !== "ENOENT") throw error;
+  }
+
+  /* realpath fails on a link whose target is gone (the dotfile was deleted).
+     Write through it anyway; renaming onto the link would replace it. */
+  try {
+    const linkTarget = await fs.readlink(preferencesPath);
+    return path.resolve(path.dirname(preferencesPath), linkTarget);
+  } catch {
+    return preferencesPath;
   }
 }
 
-async function savePreferences(value) {
+/* Saves arrive fire-and-forget from the renderer. Run them one at a time so
+   two writes never share the temporary file and the last snapshot wins. */
+let preferencesWriteQueue = Promise.resolve();
+
+function savePreferences(value) {
+  const write = preferencesWriteQueue.then(() => writePreferences(value));
+  preferencesWriteQueue = write.catch(() => {});
+  return write;
+}
+
+async function writePreferences(value) {
   const { targetPath } = await getPreferencesLocations();
   const preferencesPath = await resolvePreferencesWritePath(targetPath);
   const preferences = normalizePreferences(value);
@@ -258,6 +291,11 @@ async function scanLibrary(requestedRoot = library.root) {
     return activeScan.promise;
   }
 
+  /* Picking another folder while a slow scan is still walking must not let
+     the older scan finish later and put its library back. */
+  const generation = ++scanGeneration;
+  const superseded = () => generation !== scanGeneration;
+
   const run = (async () => {
     const tracks = [];
     const pendingDirectories = [root];
@@ -272,7 +310,7 @@ async function scanLibrary(requestedRoot = library.root) {
       phase: "scanning",
     });
 
-    while (pendingDirectories.length > 0) {
+    while (pendingDirectories.length > 0 && !superseded()) {
       const currentDirectory = pendingDirectories.pop();
       foldersVisited += 1;
 
@@ -305,6 +343,10 @@ async function scanLibrary(requestedRoot = library.root) {
           phase: "scanning",
         });
       }
+    }
+
+    if (superseded()) {
+      return { root, count: 0, foldersVisited, unreadableFolders, phase: "superseded" };
     }
 
     if (tracks.length === 0) {
@@ -342,7 +384,11 @@ async function scanLibrary(requestedRoot = library.root) {
 
 async function getRandomTrack(excludedPaths = []) {
   if (library.tracks.length === 0) {
-    await scanLibrary(library.root);
+    await (activeScan?.promise ?? scanLibrary(library.root));
+  }
+
+  if (library.tracks.length === 0) {
+    throw new Error("La biblioteca todavía no tiene pistas.");
   }
 
   const excluded = new Set(excludedPaths);
@@ -378,6 +424,12 @@ function createWindow() {
   });
 
   mainWindow.setMenuBarVisibility(false);
+  /* Dropping a file on the window would otherwise navigate to it and replace
+     the visualizer, with no way back from kiosk mode. */
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (!isAppUrl(url)) event.preventDefault();
+  });
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   mainWindow.once("ready-to-show", () => mainWindow.show());
   mainWindow.on("closed", () => {
     mainWindow = null;
@@ -392,11 +444,17 @@ function createWindow() {
 }
 
 function getDisplays() {
+  const primaryId = screen.getPrimaryDisplay().id;
+  const currentId = mainWindow
+    ? screen.getDisplayMatching(mainWindow.getBounds()).id
+    : primaryId;
+
   return screen.getAllDisplays().map((display) => ({
     id: display.id,
     label: `${display.label || "Pantalla"} · ${display.size.width}×${display.size.height}`,
     bounds: display.bounds,
-    primary: display.id === screen.getPrimaryDisplay().id,
+    primary: display.id === primaryId,
+    current: display.id === currentId,
   }));
 }
 
@@ -565,12 +623,15 @@ async function activateLinuxCapture(token) {
   throw new Error("No apareció el stream de captura de Pretendrop en PipeWire.");
 }
 
-function isTrustedMediaRequest(webContents) {
-  if (!mainWindow || webContents !== mainWindow.webContents) return false;
-  const currentUrl = webContents.getURL();
+function isAppUrl(url) {
   const appUrl = pathToFileURL(path.join(__dirname, "..", "dist") + path.sep).toString();
   const devServer = process.env.PRETENDROP_DEV_SERVER_URL;
-  return currentUrl.startsWith(appUrl) || (devServer && currentUrl.startsWith(devServer));
+  return url.startsWith(appUrl) || Boolean(devServer && url.startsWith(devServer));
+}
+
+function isTrustedMediaRequest(webContents) {
+  if (!mainWindow || webContents !== mainWindow.webContents) return false;
+  return isAppUrl(webContents.getURL());
 }
 
 function configureMediaPermissions() {

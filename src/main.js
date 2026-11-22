@@ -1,5 +1,6 @@
 import butterchurn from "butterchurn";
 import allPresets from "butterchurn-presets/all.js";
+import electroPresets from "./electro-presets.js";
 import "./style.css";
 
 const DEFAULT_TRANSITION_SECONDS = 3.8;
@@ -23,14 +24,23 @@ const QUALITY_PROFILES = {
   full: { maxScale: 2, maxPixels: 16_588_800 },
 };
 const INTERFACE_MODES = new Set(["auto", "visible", "hidden"]);
-const FAVORITES_SEED_VERSION = 3;
 const RECENT_PRESET_LIMIT = 12;
-const INITIAL_FAVORITES = [
-  "flexi + amandio c - organic12-3d-2.milk",
-  "martin - bombyx mori",
-  "Waltra - Ice Plasma",
-  "martin + stahlregen - martin in da mash 14",
+/* Each seed is added once, when the saved seed version is older, so a favorite
+   the user removed never comes back on a later seed. */
+const FAVORITE_SEEDS = [
+  {
+    version: 3,
+    names: [
+      "flexi + amandio c - organic12-3d-2.milk",
+      "martin - bombyx mori",
+      "Waltra - Ice Plasma",
+      "martin + stahlregen - martin in da mash 14",
+    ],
+  },
+  { version: 4, names: Object.keys(electroPresets) },
 ];
+const FAVORITES_SEED_VERSION = FAVORITE_SEEDS.at(-1).version;
+const STARTUP_PRESET = FAVORITE_SEEDS[0].names[0];
 const SHUFFLE_DESCRIPTIONS = {
   entropy: "Usa aleatoriedad criptográfica y aparta los últimos presets para que cada salto se sienta impredecible.",
   deck: "Crea una baraja aleatoria; no repite un preset hasta terminar el universo seleccionado.",
@@ -303,18 +313,23 @@ async function loadPreferences() {
   }
 
   const saved = stored?.preferences ?? null;
+  const savedSeedVersion = Number(saved?.favoritesSeedVersion) || 0;
   const shouldMigratePreferences = stored !== null && (
     saved === null
     || stored.sourcePath !== stored.path
     || stored.needsRewrite === true
+    || savedSeedVersion < FAVORITES_SEED_VERSION
   );
 
   const storedFavorites = Array.isArray(saved?.favorites)
     ? saved.favorites
     : [];
-  const seededFavorites = saved?.favoritesSeedVersion === FAVORITES_SEED_VERSION
-    ? storedFavorites
-    : [...new Set([...storedFavorites, ...INITIAL_FAVORITES])];
+  const seededFavorites = [...new Set([
+    ...storedFavorites,
+    ...FAVORITE_SEEDS
+      .filter((seed) => seed.version > savedSeedVersion)
+      .flatMap((seed) => seed.names),
+  ])];
   state.favorites = new Set(
     seededFavorites.filter((name) => Object.hasOwn(state.presets, name)),
   );
@@ -1386,7 +1401,7 @@ async function initVisualizer() {
     outputFXAA: true,
   });
 
-  state.presets = allPresets;
+  state.presets = { ...allPresets, ...electroPresets };
   state.presetNames = Object.keys(state.presets).sort((a, b) => a.localeCompare(b));
 
   if (state.presetNames.length === 0) {
@@ -1399,7 +1414,7 @@ async function initVisualizer() {
   resizeVisualizer();
   renderFavorites();
 
-  const favoriteIndex = state.presetNames.indexOf(INITIAL_FAVORITES[0]);
+  const favoriteIndex = state.presetNames.indexOf(STARTUP_PRESET);
   state.presetIndex =
     favoriteIndex >= 0
       ? favoriteIndex

@@ -15,7 +15,7 @@ favorites, and three deliberately different shuffle engines.
 Pretendrop requires [Node.js](https://nodejs.org/) 22.12 or newer.
 
 ```bash
-cd ~/src/pretendrop
+cd ~/dev/pretendrop
 npm ci
 npm run electron:binary
 npm run build

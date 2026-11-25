@@ -1,5 +1,6 @@
 import butterchurn from "butterchurn";
 import allPresets from "butterchurn-presets/all.js";
+import electroPresets from "./electro-presets.js";
 import "./style.css";
 
 const DEFAULT_TRANSITION_SECONDS = 3.8;
@@ -23,16 +24,23 @@ const QUALITY_PROFILES = {
   full: { maxScale: 2, maxPixels: 16_588_800 },
 };
 const INTERFACE_MODES = new Set(["auto", "visible", "hidden"]);
-const PREFERENCES_KEY = "pretendrop-preferences-v1";
-const LEGACY_PREFERENCES_KEY = "butter-preferences-v1";
-const FAVORITES_SEED_VERSION = 3;
 const RECENT_PRESET_LIMIT = 12;
-const INITIAL_FAVORITES = [
-  "flexi + amandio c - organic12-3d-2.milk",
-  "martin - bombyx mori",
-  "Waltra - Ice Plasma",
-  "martin + stahlregen - martin in da mash 14",
+/* Each seed is added once, when the saved seed version is older, so a favorite
+   the user removed never comes back on a later seed. */
+const FAVORITE_SEEDS = [
+  {
+    version: 3,
+    names: [
+      "flexi + amandio c - organic12-3d-2.milk",
+      "martin - bombyx mori",
+      "Waltra - Ice Plasma",
+      "martin + stahlregen - martin in da mash 14",
+    ],
+  },
+  { version: 4, names: Object.keys(electroPresets) },
 ];
+const FAVORITES_SEED_VERSION = FAVORITE_SEEDS.at(-1).version;
+const STARTUP_PRESET = FAVORITE_SEEDS[0].names[0];
 const SHUFFLE_DESCRIPTIONS = {
   entropy: "Usa aleatoriedad criptográfica y aparta los últimos presets para que cada salto se sienta impredecible.",
   deck: "Crea una baraja aleatoria; no repite un preset hasta terminar el universo seleccionado.",
@@ -110,6 +118,7 @@ const state = {
   silentOutput: null,
   liveInputNode: null,
   liveInputStream: null,
+  liveInputMono: false,
   visualizer: null,
   presets: {},
   presetNames: [],
@@ -198,6 +207,14 @@ function clampNumber(value, minimum, maximum, fallback, decimals = 0) {
   return Number(clamped.toFixed(decimals));
 }
 
+/* ipcRenderer.invoke wraps main-process errors as "Error invoking remote
+   method 'x': Error: message". The status line only wants the message. */
+function errorMessage(error, fallback) {
+  const message = String(error?.message ?? "")
+    .replace(/^Error invoking remote method '[^']*': (?:\w*Error: )?/, "");
+  return message || fallback;
+}
+
 function applyInterfaceMode() {
   clearTimeout(state.controlsTimer);
 
@@ -221,7 +238,7 @@ function applyInterfaceMode() {
   showControls();
 }
 
-function titleCasePreset(name) {
+function presetLabel(name) {
   return name.replace(/\s+/g, " ").trim();
 }
 
@@ -277,14 +294,8 @@ function preferenceSnapshot() {
 }
 
 async function persistPreferences() {
-  const snapshot = preferenceSnapshot();
   try {
-    if (window.pretendrop?.preferences) {
-      await window.pretendrop.preferences.save(snapshot);
-      return true;
-    }
-
-    localStorage.setItem(PREFERENCES_KEY, JSON.stringify(snapshot));
+    await window.pretendrop.preferences.save(preferenceSnapshot());
     return true;
   } catch (error) {
     console.warn("No pude guardar las preferencias de Pretendrop.", error);
@@ -293,37 +304,32 @@ async function persistPreferences() {
 }
 
 async function loadPreferences() {
-  let saved = null;
-  let shouldMigratePreferences = false;
-
+  let stored = null;
   try {
-    const stored = await window.pretendrop?.preferences?.load();
-    saved = stored?.preferences ?? null;
-    shouldMigratePreferences = saved === null
-      || stored?.sourcePath !== stored?.path
-      || stored?.needsRewrite === true;
+    stored = await window.pretendrop.preferences.load();
   } catch (error) {
+    /* Without knowing what is on disk, writing defaults now could erase it. */
     console.warn("No pude abrir el archivo de preferencias de Pretendrop.", error);
-    shouldMigratePreferences = true;
   }
 
-  if (saved === null) {
-    try {
-      saved = JSON.parse(
-        localStorage.getItem(PREFERENCES_KEY) ?? localStorage.getItem(LEGACY_PREFERENCES_KEY),
-      );
-      shouldMigratePreferences = true;
-    } catch {
-      saved = null;
-    }
-  }
+  const saved = stored?.preferences ?? null;
+  const savedSeedVersion = Number(saved?.favoritesSeedVersion) || 0;
+  const shouldMigratePreferences = stored !== null && (
+    saved === null
+    || stored.sourcePath !== stored.path
+    || stored.needsRewrite === true
+    || savedSeedVersion < FAVORITES_SEED_VERSION
+  );
 
   const storedFavorites = Array.isArray(saved?.favorites)
     ? saved.favorites
     : [];
-  const seededFavorites = saved?.favoritesSeedVersion === FAVORITES_SEED_VERSION
-    ? storedFavorites
-    : [...new Set([...storedFavorites, ...INITIAL_FAVORITES])];
+  const seededFavorites = [...new Set([
+    ...storedFavorites,
+    ...FAVORITE_SEEDS
+      .filter((seed) => seed.version > savedSeedVersion)
+      .flatMap((seed) => seed.names),
+  ])];
   state.favorites = new Set(
     seededFavorites.filter((name) => Object.hasOwn(state.presets, name)),
   );
@@ -331,10 +337,12 @@ async function loadPreferences() {
   state.shuffleStyle = Object.hasOwn(SHUFFLE_DESCRIPTIONS, saved?.shuffleStyle)
     ? saved.shuffleStyle
     : "entropy";
-  const savedInterval = Math.round(Number(saved?.presetIntervalSeconds));
-  state.presetIntervalSeconds = Number.isFinite(savedInterval)
-    ? Math.min(Math.max(savedInterval, 0), MAX_PRESET_INTERVAL_SECONDS)
-    : DEFAULT_PRESET_INTERVAL_SECONDS;
+  state.presetIntervalSeconds = clampNumber(
+    saved?.presetIntervalSeconds,
+    0,
+    MAX_PRESET_INTERVAL_SECONDS,
+    DEFAULT_PRESET_INTERVAL_SECONDS,
+  );
   state.transitionSeconds = clampNumber(
     saved?.transitionSeconds,
     0,
@@ -541,7 +549,7 @@ function renderFavorites() {
     const select = document.createElement("button");
     select.type = "button";
     select.className = "favorite-select";
-    select.textContent = titleCasePreset(name);
+    select.textContent = presetLabel(name);
     select.title = `Usar ${name}`;
     select.addEventListener("click", () => {
       const index = state.presetNames.indexOf(name);
@@ -665,7 +673,7 @@ function loadPreset(index, transition = state.transitionSeconds) {
       try {
         state.visualizer.loadPreset(state.presets[name], transition);
         state.presetIndex = candidateIndex;
-        elements.presetName.textContent = titleCasePreset(name);
+        elements.presetName.textContent = presetLabel(name);
         recordPresetVisit(name);
         updateFavoriteButton();
         return true;
@@ -818,11 +826,7 @@ function renderFrame(timestamp = 0) {
       state.visualAudioLevels.timeByteArrayR,
     );
 
-    const liveChannelCount = state.liveInputStream
-      ?.getAudioTracks()[0]
-      ?.getSettings()
-      ?.channelCount;
-    if (liveChannelCount === 1) {
+    if (state.liveInputMono) {
       state.visualAudioLevels.timeByteArrayL.set(
         state.visualAudioLevels.timeByteArray,
       );
@@ -943,7 +947,7 @@ function mediaInputError(error) {
   if (error?.name === "OverconstrainedError") {
     return "El micrófono guardado ya no está disponible.";
   }
-  return error?.message || "No pude abrir la entrada de audio.";
+  return errorMessage(error, "No pude abrir la entrada de audio.");
 }
 
 function liveAudioConstraints(deviceId = "default") {
@@ -1010,6 +1014,7 @@ function stopLiveInput() {
   const inputStream = state.liveInputStream;
   state.liveInputNode = null;
   state.liveInputStream = null;
+  state.liveInputMono = false;
   state.liveInputLabel = "";
 
   try {
@@ -1093,6 +1098,9 @@ function attachLiveInput(mode, acquired) {
 
   state.audioSourceMode = mode;
   state.liveInputStream = acquired.stream;
+  /* A mono input only fills the left analyser; render copies it to both
+     sides. Read once here instead of calling getSettings() every frame. */
+  state.liveInputMono = acquired.stream.getAudioTracks()[0]?.getSettings()?.channelCount === 1;
   state.liveInputNode = inputNode;
   state.liveInputLabel = acquired.label;
   state.liveInputNode.connect(state.inputAnalyser);
@@ -1226,7 +1234,7 @@ async function playRandomTrack() {
     setStatus("El cambio de pista sólo aplica a la biblioteca.");
     return false;
   }
-  if (state.loadingTrack) return;
+  if (state.loadingTrack) return false;
   state.loadingTrack = true;
   setStatus("Eligiendo una canción…");
 
@@ -1246,7 +1254,7 @@ async function playRandomTrack() {
     setStatus("audio reactivo · salida silenciada", "ready", { standing: true });
     return true;
   } catch (error) {
-    setStatus(`No pude reproducir: ${error.message}`, "error");
+    setStatus(`No pude reproducir: ${errorMessage(error, "error desconocido")}`, "error");
     state.paused = true;
     updatePlaybackUi();
     return false;
@@ -1276,9 +1284,15 @@ async function togglePlayback() {
   }
 
   if (state.audio.paused) {
-    await state.audioContext.resume();
-    await state.audio.play();
-    state.paused = false;
+    try {
+      await state.audioContext.resume();
+      await state.audio.play();
+      state.paused = false;
+    } catch {
+      /* The file may be gone or unreadable since it was picked. */
+      await playRandomTrack();
+      return;
+    }
   } else {
     state.audio.pause();
     state.paused = true;
@@ -1357,7 +1371,7 @@ async function indexLibrary(root) {
       await playRandomTrack();
     }
   } catch (error) {
-    setStatus(error.message, "error");
+    setStatus(errorMessage(error, "No pude leer la biblioteca."), "error");
   }
 }
 
@@ -1369,6 +1383,9 @@ async function populateDisplays() {
     const option = document.createElement("option");
     option.value = String(display.id);
     option.textContent = `${display.primary ? "Principal · " : ""}${display.label}`;
+    /* Show where the window really is; otherwise the first option looks
+       selected and picking it does nothing, since change never fires. */
+    option.selected = display.current === true;
     elements.displaySelect.append(option);
   }
 }
@@ -1384,7 +1401,7 @@ async function initVisualizer() {
     outputFXAA: true,
   });
 
-  state.presets = allPresets;
+  state.presets = { ...allPresets, ...electroPresets };
   state.presetNames = Object.keys(state.presets).sort((a, b) => a.localeCompare(b));
 
   if (state.presetNames.length === 0) {
@@ -1392,13 +1409,12 @@ async function initVisualizer() {
   }
 
   await loadPreferences();
-  elements.presetDuration.value = String(state.presetIntervalSeconds);
   updateShuffleControls();
   updateSceneControls();
   resizeVisualizer();
   renderFavorites();
 
-  const favoriteIndex = state.presetNames.indexOf(INITIAL_FAVORITES[0]);
+  const favoriteIndex = state.presetNames.indexOf(STARTUP_PRESET);
   state.presetIndex =
     favoriteIndex >= 0
       ? favoriteIndex
@@ -1494,10 +1510,12 @@ function bindControls() {
   elements.toggleBlackout.addEventListener("click", toggleBlackout);
 
   elements.presetDuration.addEventListener("change", () => {
-    const requestedInterval = Math.round(Number(elements.presetDuration.value));
-    state.presetIntervalSeconds = Number.isFinite(requestedInterval)
-      ? Math.min(Math.max(requestedInterval, 0), MAX_PRESET_INTERVAL_SECONDS)
-      : DEFAULT_PRESET_INTERVAL_SECONDS;
+    state.presetIntervalSeconds = clampNumber(
+      elements.presetDuration.value,
+      0,
+      MAX_PRESET_INTERVAL_SECONDS,
+      DEFAULT_PRESET_INTERVAL_SECONDS,
+    );
     elements.presetDuration.value = String(state.presetIntervalSeconds);
     restartPresetTimer();
     void persistPreferences();
@@ -1581,7 +1599,9 @@ function bindControls() {
     void window.pretendrop.window.setDisplay(Number(elements.displaySelect.value));
   });
 
-  document.addEventListener("mousemove", showControls);
+  /* Not a bare reference: the event object would land in `force` and reveal
+     the interface in "always hidden" mode and during blackout. */
+  document.addEventListener("mousemove", () => showControls());
   document.addEventListener("keydown", (event) => {
     if (event.metaKey || event.ctrlKey || event.altKey) {
       if (event.ctrlKey && event.key.toLowerCase() === "q") {
@@ -1685,7 +1705,7 @@ async function boot() {
     }
   } catch (error) {
     console.error(error);
-    setStatus(error.message || "Pretendrop no pudo iniciar.", "error");
+    setStatus(errorMessage(error, "Pretendrop no pudo iniciar."), "error");
   }
 }
 

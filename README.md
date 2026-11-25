@@ -8,7 +8,10 @@ your own library to drive the visuals, then routes the audio through a gain of
 zero. The screen gets the motion; the room stays quiet.
 
 It ships with the Butterchurn preset collection, fast preset transitions,
-favorites, and three deliberately different shuffle engines.
+favorites, and three deliberately different shuffle engines. It also brings
+three electrocardiograms of its own, already in your favorites: **electro
+monitor** (a green hospital sweep), **electro latido** (a paper strip that
+beats on every kick) and **electro espiral** (a heartbeat that winds outward).
 
 ## Start it
 
@@ -95,7 +98,10 @@ $XDG_CONFIG_HOME/pretendrop/preferences.json
 # or ~/.config/pretendrop/preferences.json when XDG_CONFIG_HOME is unset
 ```
 
-The file is plain JSON and is created automatically on first run. Existing
+The file is plain JSON and is created automatically on first run. If a hand
+edit leaves it unparseable, Pretendrop copies it to
+`preferences.json.broken-<timestamp>` before writing defaults, so the favorites
+can be recovered from the copy. Existing
 Butter preferences are migrated once if they are found, without deleting the
 old file. Set `PRETENDROP_PREFERENCES_FILE` to use an explicit JSON path.
 
